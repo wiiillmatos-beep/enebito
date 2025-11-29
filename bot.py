@@ -13,6 +13,13 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = -1001234567890  # substitua pelo ID real do seu canal
 AFILIADO_PARAMS = "af_id=WiillzeraTV&currency=BRL&region=global&utm_source=WiillzeraTV&utm_medium=infl"
 
+# ===============================
+# VARIÁVEIS DE CONTROLE
+# ===============================
+SEND_NOW = False          # True → envia ofertas imediatamente
+NUM_OFERTAS = 4           # quantas ofertas enviar por vez
+ENVIO_INTERVALO = 3       # segundos entre envio de cada oferta
+
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
@@ -30,18 +37,14 @@ def gerar_link_afiliado(link_normal):
 # ===============================
 def buscar_ofertas():
     url = "https://www.eneba.com/br/games"  # página de exemplo
-    headers = {
-        "User-Agent": "Mozilla/5.0"
-    }
+    headers = {"User-Agent": "Mozilla/5.0"}
 
     try:
         req = requests.get(url, headers=headers, timeout=10)
         soup = BeautifulSoup(req.text, "html.parser")
-        
         ofertas = []
 
-        # Exemplo: seleciona produtos na página
-        produtos = soup.select("div.product-item")[:4]  # pega 4 primeiros produtos
+        produtos = soup.select("div.product-item")[:NUM_OFERTAS]  # pega X produtos
         for p in produtos:
             titulo_tag = p.select_one("a.product-title")
             preco_tag = p.select_one("span.price")
@@ -66,7 +69,7 @@ def buscar_ofertas():
 # ===============================
 # FUNÇÃO ROBUSTA PARA ENVIO DE OFERTA
 # ===============================
-async def enviar_oferta(oferta):
+async def enviar_oferta(oferta, chat_id=CHAT_ID):
     link_afiliado = gerar_link_afiliado(oferta["link"])
     
     texto = (
@@ -82,7 +85,7 @@ async def enviar_oferta(oferta):
 
     try:
         await bot.send_photo(
-            CHAT_ID,
+            chat_id,
             photo=oferta["imagem"],
             caption=texto,
             reply_markup=teclado,
@@ -92,7 +95,7 @@ async def enviar_oferta(oferta):
     except Exception as e:
         print(f"⚠️ Erro ao enviar foto, enviando apenas texto: {e}")
         try:
-            await bot.send_message(CHAT_ID, f"{texto}\n{link_afiliado}", parse_mode="Markdown")
+            await bot.send_message(chat_id, f"{texto}\n{link_afiliado}", parse_mode="Markdown")
             print(f"✅ Oferta enviada como texto: {oferta['titulo']}")
         except Exception as e2:
             print(f"❌ Não foi possível enviar a oferta: {e2}")
@@ -101,17 +104,24 @@ async def enviar_oferta(oferta):
 # AGENDADOR DE OFERTAS AUTOMÁTICAS
 # ===============================
 async def agendador():
+    global SEND_NOW
     horarios = ["11:00", "17:00", "20:00"]
 
     while True:
         agora = datetime.datetime.now().strftime("%H:%M")
-        if agora in horarios:
-            print(f"🟢 Postando ofertas automáticas ({agora})")
+
+        if agora in horarios or SEND_NOW:
+            print(f"🟢 Postando ofertas ({'SEND_NOW' if SEND_NOW else agora})")
             ofertas = buscar_ofertas()
             for oferta in ofertas:
                 await enviar_oferta(oferta)
-                await asyncio.sleep(3)
+                await asyncio.sleep(ENVIO_INTERVALO)
+
+            if SEND_NOW:
+                SEND_NOW = False  # reseta após enviar
+
             await asyncio.sleep(60)  # evita repetir no mesmo minuto
+
         await asyncio.sleep(20)
 
 # ===============================
@@ -120,7 +130,7 @@ async def agendador():
 async def cmd_promo(message: Message):
     args = message.text.split(" ", 1)
     if len(args) == 1:
-        # /promo → envia ofertas atuais
+        # /promo → envia ofertas reais
         await message.answer("Enviando ofertas reais no canal...")
         ofertas = buscar_ofertas()
         for oferta in ofertas:
@@ -138,11 +148,21 @@ async def cmd_promo(message: Message):
         await message.answer("✅ Oferta enviada manualmente!")
 
 # ===============================
+# HANDLER DO COMANDO /sendnow
+# ===============================
+async def cmd_sendnow(message: Message):
+    global SEND_NOW
+    SEND_NOW = True
+    await message.answer("⚡ Envio imediato de ofertas ativado! Aguarde alguns segundos...")
+
+# ===============================
 # INICIALIZAÇÃO DO BOT
 # ===============================
 async def main():
     dp.message.register(cmd_promo, F.text.startswith("/promo"))
-    asyncio.create_task(agendador())  # inicia agendador em segundo plano
+    dp.message.register(cmd_sendnow, F.text.startswith("/sendnow"))
+
+    asyncio.create_task(agendador())
     print("🤖 BOT ONLINE")
     await dp.start_polling(bot)
 
