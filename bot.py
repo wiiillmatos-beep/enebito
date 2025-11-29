@@ -64,15 +64,15 @@ def buscar_ofertas():
         return []
 
 # ===============================
-# FUNÇÃO PARA MONTAR TEMPLATE
+# FUNÇÃO ROBUSTA PARA ENVIO DE OFERTA
 # ===============================
-def montar_template(titulo, preco, link, imagem):
-    link_afiliado = gerar_link_afiliado(link)
+async def enviar_oferta(oferta):
+    link_afiliado = gerar_link_afiliado(oferta["link"])
     
     texto = (
         f"🔥 *OFERTA ENEBA* 🔥\n\n"
-        f"🎮 *{titulo}*\n"
-        f"💰 Preço: *{preco}*\n\n"
+        f"🎮 *{oferta['titulo']}*\n"
+        f"💰 Preço: *{oferta['preco']}*\n\n"
         f"🔗 Clique no botão abaixo para comprar:"
     )
 
@@ -80,25 +80,22 @@ def montar_template(titulo, preco, link, imagem):
         inline_keyboard=[[InlineKeyboardButton(text="🛒 COMPRE AQUI", url=link_afiliado)]]
     )
 
-    return texto, teclado, imagem
-
-# ===============================
-# ENVIO DE OFERTA
-# ===============================
-async def enviar_oferta(oferta):
-    texto, teclado, imagem_url = montar_template(
-        oferta["titulo"], oferta["preco"], oferta["link"], oferta["imagem"]
-    )
     try:
         await bot.send_photo(
             CHAT_ID,
-            photo=imagem_url,
+            photo=oferta["imagem"],
             caption=texto,
             reply_markup=teclado,
             parse_mode="Markdown"
         )
+        print(f"✅ Oferta enviada: {oferta['titulo']}")
     except Exception as e:
-        print("Erro ao enviar oferta:", e)
+        print(f"⚠️ Erro ao enviar foto, enviando apenas texto: {e}")
+        try:
+            await bot.send_message(CHAT_ID, f"{texto}\n{link_afiliado}", parse_mode="Markdown")
+            print(f"✅ Oferta enviada como texto: {oferta['titulo']}")
+        except Exception as e2:
+            print(f"❌ Não foi possível enviar a oferta: {e2}")
 
 # ===============================
 # AGENDADOR DE OFERTAS AUTOMÁTICAS
@@ -123,7 +120,7 @@ async def agendador():
 async def cmd_promo(message: Message):
     args = message.text.split(" ", 1)
     if len(args) == 1:
-        # /promo → envia ofertas automáticas agora
+        # /promo → envia ofertas atuais
         await message.answer("Enviando ofertas reais no canal...")
         ofertas = buscar_ofertas()
         for oferta in ofertas:
