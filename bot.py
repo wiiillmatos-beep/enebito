@@ -7,7 +7,7 @@ from aiogram.types import Message
 # CONFIGURAÇÕES DO BOT
 # ===============================
 BOT_TOKEN = os.getenv("BOT_TOKEN")  # ou coloque o token direto aqui para teste
-CHAT_ID = -1001234567890  # substitua pelo chat ID real do seu canal
+CHAT_ID = -1001872183962  # substitua pelo chat ID real do seu canal
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
