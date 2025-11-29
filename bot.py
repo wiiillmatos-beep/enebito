@@ -79,7 +79,7 @@ async def cmd_promo(message: Message, bot: Bot):
 # HORÁRIOS: 11:00 / 17:00 / 20:00
 # ===============================
 async def agendador(bot: Bot):
-    horarios = ["11:00", "17:00", "20:00"]
+    horarios = ["11:00", "17:00", "17:15"]
 
     while True:
         agora = datetime.datetime.now().strftime("%H:%M")
