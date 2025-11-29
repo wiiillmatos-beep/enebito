@@ -68,11 +68,11 @@ async def enviar_promocao_teste(bot: Bot):
     )
 
 # ===============================
-# HANDLER DO COMANDO /promo
+# HANDLER DO COMANDO /promo (teste simples)
 # ===============================
 async def cmd_promo(message: Message, bot: Bot):
-    await message.answer("Enviando promoção de teste no canal...")
-    await enviar_promocao_teste(bot)
+    await message.answer("Enviando teste no canal...")
+    await bot.send_message(CHAT_ID, "🔥 TESTE DE ENVIO PARA O CANAL 🔥")
 
 # ===============================
 # SISTEMA DE POSTAGENS AUTOMÁTICAS
