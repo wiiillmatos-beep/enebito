@@ -9,7 +9,7 @@ from aiogram.types import Message, InlineKeyboardButton, InlineKeyboardMarkup
 # ===============================
 # CONFIGURAÇÕES DO BOT
 # ===============================
-BOT_TOKEN = os.getenv("BOT_TOKEN")
+BOT_TOKEN = 8335817419:AAEw-tmkLQgi8n53B4hiWTgE4yKDNtYNVRM
 CHAT_ID = -1001234567890  # substitua pelo ID real do seu canal
 AFILIADO_PARAMS = "af_id=WiillzeraTV&currency=BRL&region=global&utm_source=WiillzeraTV&utm_medium=infl"
 
