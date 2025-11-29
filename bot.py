@@ -15,7 +15,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")  # Configure no Deployra
 if not BOT_TOKEN:
     raise Exception("🚨 BOT_TOKEN não definido. Configure no Deployra.")
 
-CHAT_ID = "@enebaofertas"   # Canal onde será enviado
+CHAT_ID = "-1001872183962"   # Canal onde será enviado
 AFILIADO = "https://www.eneba.com/br/?af_id=WiillzeraTV&utm_medium=infl&utm_source=WiillzeraTV"
 
 # ===============================
