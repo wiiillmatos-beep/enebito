@@ -8,7 +8,7 @@ import datetime
 # CONFIGURAÇÕES DO BOT
 # ===============================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHAT_ID = -1001234567890  # substitua pelo ID real do seu canal
+CHAT_ID = -1001872183962  # substitua pelo ID real do seu canal
 AFILIADO = "https://www.eneba.com/br/?af_id=WiillzeraTV&utm_medium=infl&utm_source=WiillzeraTV"
 
 bot = Bot(token=BOT_TOKEN)
