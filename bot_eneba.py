@@ -9,6 +9,7 @@ import random
 import asyncio
 from flask import Flask
 from threading import Thread
+from waitress import serve # Importado para uso no servidor Flask
 
 # Importações do Python Telegram Bot (PTB)
 from telegram import Bot, Update
@@ -20,19 +21,15 @@ from telegram.ext import Application, CommandHandler, CallbackContext, filters
 BOT_TOKEN = os.getenv("BOT_TOKEN") 
 CHAT_ID = os.getenv("CHAT_ID")
 
-# NOVA LEITURA SEGURA DO ADMIN_USER_ID
+# LEITURA ROBUSTA DO ADMIN_USER_ID
 admin_user_id_str = os.getenv("ADMIN_USER_ID")
-if admin_user_id_str:
-    try:
-        ADMIN_USER_ID = int(admin_user_id_str)
-    except ValueError:
-        print("ERRO: ADMIN_USER_ID deve ser um número inteiro. Usando 0 como fallback.")
-        ADMIN_USER_ID = 0
+if admin_user_id_str and admin_user_id_str.isdigit():
+    ADMIN_USER_ID = int(admin_user_id_str)
 else:
-    print("ERRO: Variável ADMIN_USER_ID não definida. Os comandos /start e /promo não funcionarão.")
+    print("⚠️ ERRO: ADMIN_USER_ID não definido ou não é um número. Comandos de admin serão desativados.")
     ADMIN_USER_ID = 0
     
-# ** ATENÇÃO: SUBSTITUA ESTE LINK **
+# ** LINK CORRIGIDO: SUA URL DE SCRAPING ESPECÍFICA **
 # URL da página de ofertas da Eneba que será monitorada.
 SCRAPING_URL = "https://www.eneba.com/br/store/xbox-games?drms[]=xbox&page=1&regions[]=egypt&regions[]=latam&regions[]=saudi_arabia&regions[]=argentina&types[]=game" 
 
@@ -50,7 +47,6 @@ def get_exchange_rate():
     try:
         response = requests.get(API_URL, timeout=10) 
         response.raise_for_status() 
-        # Busca a taxa BRL dentro da lista de taxas do EUR.
         return response.json()['rates']['BRL']
     except requests.exceptions.RequestException:
         print("⚠️ Erro ao obter câmbio EUR/BRL. Usando taxa fallback (5.50).")
@@ -91,7 +87,7 @@ async def enviar_mensagem(chat_id_destino, texto):
 def formatar_oferta(oferta, exchange_rate):
     """Formata os dados extraídos em uma mensagem."""
     produto = oferta.get('name', 'Produto Desconhecido')
-    preco_eur = oferta.get('price_usd', 0.0) # Valor em Euro
+    preco_eur = oferta.get('price_usd', 0.0)
     link = oferta.get('url', '#')
     
     try:
@@ -132,20 +128,16 @@ def perform_scraping(url):
             return ofertas
 
         for card in product_cards:
-            # Extrai Link e ID
             link_tag = card.find('a', href=True)
             link = "https://www.eneba.com" + link_tag['href'] if link_tag else None
             product_id = link.split('/')[-1] if link else None
             
-            # Extrai Nome
             name_tag = card.find('span', class_=lambda c: c and 'product-title' in c)
             name = name_tag.text.strip() if name_tag else None
             
-            # Extrai Preço
             price_tag = card.find('div', class_=lambda c: c and 'product-price' in c)
             price_eur = None
             if price_tag:
-                # Remove símbolos de moeda e substitui vírgula por ponto
                 price_text = price_tag.text.replace('$', '').replace('€', '').replace('R', '').replace(',', '.').strip()
                 try:
                     price_eur = float(price_text)
@@ -156,7 +148,7 @@ def perform_scraping(url):
                  ofertas.append({
                     'id': product_id,
                     'name': name,
-                    'price_usd': price_eur, # Usamos 'price_usd' como chave interna, mas o valor é EUR
+                    'price_usd': price_eur,
                     'url': link
                 })
 
@@ -189,9 +181,8 @@ def buscar_e_enviar_ofertas(numero_de_ofertas):
     
     for oferta in ofertas_extraidas:
         product_id = oferta.get('id')
-        price_eur = oferta.get('price_usd', 0.0) # É o valor em Euro
+        price_eur = oferta.get('price_usd', 0.0) 
         
-        # Filtros
         if product_id not in sent_ids:
             try:
                 price_brl = price_eur * current_exchange_rate
@@ -200,7 +191,6 @@ def buscar_e_enviar_ofertas(numero_de_ofertas):
             except (TypeError, ValueError):
                 continue
 
-    # Seleciona o número desejado de ofertas novas
     ofertas_para_enviar = ofertas_para_enviar[:numero_de_ofertas]
 
     if not ofertas_para_enviar:
@@ -270,6 +260,10 @@ async def check_admin(update: Update) -> bool:
     """Verifica se o comando foi enviado no chat privado e pelo Admin."""
     user = update.effective_user
     
+    if ADMIN_USER_ID == 0:
+        await update.message.reply_text("🚫 Configuração: O ADMIN_USER_ID não está configurado corretamente. Comandos de admin desativados.")
+        return False
+
     if update.effective_chat.type != "private":
         await update.message.reply_text("Este comando só pode ser usado no chat privado com o bot.")
         return False
@@ -296,7 +290,7 @@ async def start_command(update: Update, context: CallbackContext) -> None:
         ofertas_filtradas = []
         for oferta in ofertas_extraidas:
             product_id = oferta.get('id')
-            price_eur = oferta.get('price_usd', 0.0) # É o valor em Euro
+            price_eur = oferta.get('price_usd', 0.0)
             
             if product_id not in sent_ids:
                 try:
@@ -310,7 +304,6 @@ async def start_command(update: Update, context: CallbackContext) -> None:
             await update.message.reply_text("Scraping efetuado, mas nenhuma oferta nova e filtrada foi encontrada!")
             return
 
-        # Seleciona uma oferta aleatoriamente
         oferta = random.choice(ofertas_filtradas)
         mensagem_formatada = formatar_oferta(oferta, current_exchange_rate)
         
@@ -345,11 +338,9 @@ async def promo_command(update: Update, context: CallbackContext) -> None:
         response.raise_for_status()
         soup = BeautifulSoup(response.text, 'html.parser')
 
-        # Tenta extrair Nome (Ajuste o seletor conforme necessário para a página de produto!)
         name_tag = soup.find('h1', class_=lambda c: c and 'pdp-title' in c) 
         name = name_tag.text.strip() if name_tag else "Produto Promovido"
 
-        # Tenta extrair Preço (Ajuste o seletor conforme necessário para a página de produto!)
         price_tag = soup.find('div', class_=lambda c: c and 'pdp-price' in c) 
         price_eur = 0.0
         if price_tag:
@@ -362,7 +353,7 @@ async def promo_command(update: Update, context: CallbackContext) -> None:
         oferta = {
             'id': url_do_produto.split('/')[-1],
             'name': name,
-            'price_usd': price_eur, # É o valor em Euro
+            'price_usd': price_eur, 
             'url': url_do_produto
         }
 
@@ -399,7 +390,6 @@ def run_scheduler_loop():
 def run_flask_server():
     global PORT
     print(f"Servidor Flask iniciado na porta {PORT} (Keep Alive) usando Waitress...")
-    from waitress import serve
     serve(app, host='0.0.0.0', port=PORT)
 
 # --- INÍCIO DO PROGRAMA ---
