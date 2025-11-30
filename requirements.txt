@@ -1,5 +1,5 @@
-pandas
+python-telegram-bot==20.8
+Flask
 requests
+beautifulsoup4
 schedule
-flask
-python-telegram-bot
