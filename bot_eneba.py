@@ -1,7 +1,6 @@
 import requests
 from bs4 import BeautifulSoup
 import time
-import schedule
 import os
 import asyncio
 from threading import Thread
@@ -69,7 +68,7 @@ def scrape_detalhes_produto(url: str) -> dict:
     
     try:
         response = requests.get(url, headers=headers, timeout=15)
-        # NOVO LOG: Mostra o status da requisição para debug
+        # LOG: Mostra o status da requisição para debug
         logger.info(f"Status Code da requisição para Eneba: {response.status_code}") 
         
         response.raise_for_status() # Levanta erro para 4xx ou 5xx (bloqueio ou erro de servidor)
@@ -229,57 +228,6 @@ async def handle_link(update: Update, context: CallbackContext) -> None:
         await update.message.reply_text(f"❌ ERRO ao enviar para o canal. Verifique permissões/ID.")
         logger.error(f"ERRO DE ENVIO para {CHAT_ID_DESTINO}: {e}")
 
-# --- ⏰ AGENDAMENTO DE MENSAGENS DIÁRIAS ---
-
-async def enviar_mensagem_diaria(mensagem: str):
-    """Função assíncrona para enviar as mensagens agendadas."""
-    global application, CHAT_ID_DESTINO
-    if not application or not CHAT_ID_DESTINO: return
-
-    try:
-        await application.bot.send_message(
-            chat_id=CHAT_ID_DESTINO,
-            text=mensagem,
-            parse_mode=ParseMode.MARKDOWN
-        )
-        logger.info(f"Mensagem agendada enviada para {CHAT_ID_DESTINO}.")
-    except Exception as e:
-        logger.error(f"ERRO ao enviar mensagem agendada: {e}")
-
-def agendar_0930():
-    mensagem = "☀️ **BOM DIA, CHAT!** 🚀 Fique de olho, o Admin logo enviará novidades!"
-    # Usa o loop do Polling para executar a corrotina (Thread-safe)
-    asyncio.run_coroutine_threadsafe(enviar_mensagem_diaria(mensagem), application.loop)
-
-def agendar_1300():
-    mensagem = "🍕 **PAUSA PARA O ALMOÇO!** 🍽️ O Admin está monitorando os melhores preços."
-    asyncio.run_coroutine_threadsafe(enviar_mensagem_diaria(mensagem), application.loop)
-
-def agendar_2000():
-    mensagem = "🌙 **BOA NOITE, GAMERS!** ✨ As ofertas noturnas estão a caminho!"
-    asyncio.run_coroutine_threadsafe(enviar_mensagem_diaria(mensagem), application.loop)
-
-def configurar_agendamento():
-    schedule.every().day.at("09:30").do(agendar_0930) 
-    schedule.every().day.at("13:00").do(agendar_1300) 
-    schedule.every().day.at("20:00").do(agendar_2000) 
-    logger.info("Agendamento diário configurado.")
-
-# --- 🔄 LOOP DO SCHEDULER EM THREAD ---
-
-def run_scheduler_loop():
-    """Executa o loop do scheduler."""
-    time.sleep(5) # Espera o Polling iniciar antes de configurar o agendamento
-    configurar_agendamento()
-    logger.info("Iniciando loop do scheduler em background...")
-    
-    while True:
-        try:
-            schedule.run_pending()
-            time.sleep(1)
-        except Exception as e:
-            logger.error(f"ERRO no loop do Scheduler: {e}")
-            time.sleep(5)
 
 # --- 🌐 WEB SERVICE (KEEP-ALIVE) ---
 
@@ -300,8 +248,18 @@ def run_flask_server():
     except Exception as e:
         logger.error(f"ERRO ao iniciar o servidor Flask Keep-Alive: {e}")
 
-
 # --- 🏃 INÍCIO DO PROGRAMA ---
+
+async def init_application(application_instance: Application):
+    """Função assíncrona para excluir o webhook antes de iniciar o polling."""
+    logger.info("Verificando e excluindo qualquer webhook remanescente para evitar conflitos...")
+    try:
+        # Chama a API do Telegram para garantir que o Webhook seja removido
+        await application_instance.bot.delete_webhook()
+        logger.info("✅ Webhook antigo limpo com sucesso. O Polling pode iniciar.")
+    except Exception as e:
+        # Se houver erro, apenas registra e prossegue, pois o erro pode ser 'não há webhook'
+        logger.warning(f"Não foi possível excluir o webhook (normal se não houver um): {e}")
 
 def main():
     global application, admin_user_id_int
@@ -329,16 +287,15 @@ def main():
     flask_thread = Thread(target=run_flask_server)
     flask_thread.start()
 
+    # NOVO: Exclui o webhook antes de iniciar o polling, resolvendo o conflito.
+    asyncio.run(init_application(application))
+
     # Handlers do Telegram (deve vir depois da criação da application)
     application.add_handler(CommandHandler("start", start_command))
     # Filtro para identificar URLs da Eneba (o Regex 'https?:\/\/...' faz o trabalho)
     application.add_handler(MessageHandler(filters.TEXT & filters.Regex(r'https?:\/\/(?:www\.)?eneba\.com'), handle_link))
 
-    # 4. Inicia o loop do Scheduler em uma thread separada
-    scheduler_thread = Thread(target=run_scheduler_loop)
-    scheduler_thread.start()
-
-    # 5. Inicia o Polling na thread principal (mantém o processo vivo)
+    # 4. Inicia o Polling na thread principal (mantém o processo vivo)
     logger.info("Iniciando Polling do Telegram Bot na thread principal...")
     try:
         # run_polling é síncrono e mantém o programa em execução
