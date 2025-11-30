@@ -3,4 +3,4 @@ beautifulsoup4
 schedule
 waitress
 python-telegram-bot
-flask
+flask[async]
