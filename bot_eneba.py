@@ -5,28 +5,31 @@ import schedule
 import os
 import io
 import json
-import random # Novo para ofertas aleatórias
+import random 
 from flask import Flask
 from threading import Thread
 
 # Importações do Python Telegram Bot (PTB)
 from telegram import Bot, Update
 from telegram.constants import ParseMode
+from telegram.ext import Application, CommandHandler, CallbackContext, filters
 
 # --- ⚙️ CONFIGURAÇÕES (LENDO VARIÁVEIS DE AMBIENTE) ---
 
 # IDs essenciais lidos do ambiente do Render
 BOT_TOKEN = os.getenv("BOT_TOKEN") 
 CHAT_ID = os.getenv("CHAT_ID")
-ADMIN_USER_ID = int(os.getenv("ADMIN_USER_ID", 0)) # Seu ID de usuário Admin
+# Lê o ID do admin. O valor padrão 0 garante que a conversão para int funcione mesmo se a variável não estiver setada
+ADMIN_USER_ID = int(os.getenv("ADMIN_USER_ID", 0)) 
 
+# A mensagem de erro será impressa, mas não impede o Flask de iniciar.
 if not BOT_TOKEN or not CHAT_ID or ADMIN_USER_ID == 0:
-    print("ERRO CRÍTICO: Token, Chat ID ou Admin ID não configurados no ambiente.")
+    print("ERRO CRÍTICO: Token, Chat ID ou Admin ID não configurados no ambiente. Os comandos manuais não funcionarão.")
 
 # Link do seu feed de produtos em CSV da Eneba
 PLANILHA_URL = "https://www.eneba.com/rss/products.csv?version=3&influencer_id=WiillzeraTV"
 RASTREAMENTO_FILE = 'sent_offers_ids.txt' 
-PRECO_MAXIMO_FILTRO_BRL = 150.00 # Ajuste este valor
+PRECO_MAXIMO_FILTRO_BRL = 150.00 
 
 # Nomes das colunas no seu arquivo CSV
 COLUNA_ID_PRODUTO = 'id'        
@@ -35,7 +38,8 @@ COLUNA_PRECO_USD = 'final_price'
 COLUNA_LINK = 'url'             
 
 # Inicializa o Bot do Telegram para uso em funções (fora dos Handlers do PTB)
-telegram_bot = Bot(token=BOT_TOKEN) 
+# Adicionamos um placeholder para evitar erro se o BOT_TOKEN for None
+telegram_bot = Bot(token=BOT_TOKEN or "placeholder") 
 
 # --- 💵 FUNÇÃO PARA BUSCAR A COTAÇÃO DE CÂMBIO ---
 
@@ -47,6 +51,7 @@ def get_exchange_rate():
         response.raise_for_status() 
         return response.json()['rates']['BRL']
     except requests.exceptions.RequestException:
+        print("⚠️ Erro ao obter câmbio. Usando taxa fallback (5.00).")
         return 5.00 
 
 # --- 💾 RASTREAMENTO DE OFERTAS ---
@@ -66,7 +71,12 @@ def save_sent_ids(ids_para_adicionar):
 def formatar_oferta(row, exchange_rate):
     """Formata os dados da linha do CSV em uma mensagem com botão de compra."""
     produto = row[COLUNA_PRODUTO]
-    preco_usd = float(row[COLUNA_PRECO_USD])
+    # Trata valores não numéricos no preço, se necessário
+    try:
+        preco_usd = float(row[COLUNA_PRECO_USD])
+    except ValueError:
+        preco_usd = 0.0
+    
     preco_brl = preco_usd * exchange_rate
     link = row[COLUNA_LINK]
     
@@ -84,8 +94,7 @@ def formatar_oferta(row, exchange_rate):
 
 async def enviar_mensagem(chat_id_destino, texto):
     """Função assíncrona para envio de mensagens, usando o objeto Bot."""
-    if not BOT_TOKEN or not CHAT_ID:
-        print("Não é possível enviar a mensagem: Token/Chat ID não configurados.")
+    if not telegram_bot.token or not chat_id_destino:
         return False
         
     try:
@@ -97,7 +106,7 @@ async def enviar_mensagem(chat_id_destino, texto):
         )
         return True
     except Exception as e:
-        print(f"Erro ao enviar mensagem: {e}")
+        print(f"Erro ao enviar mensagem para {chat_id_destino}: {e}")
         return False
 
 # --- 🚀 LÓGICA DE BUSCA DE OFERTAS AGENDADAS ---
@@ -106,6 +115,8 @@ def buscar_e_enviar_ofertas(numero_de_ofertas):
     """Busca um número específico de ofertas novas e as envia."""
     print(f"Buscando {numero_de_ofertas} novas ofertas no feed CSV...")
     
+    if not BOT_TOKEN or not CHAT_ID: return
+
     current_exchange_rate = get_exchange_rate()
     sent_ids = load_sent_ids()
     ids_enviados_nesta_execucao = []
@@ -129,23 +140,20 @@ def buscar_e_enviar_ofertas(numero_de_ofertas):
             print("Nenhuma nova oferta que atenda aos filtros encontrada.")
             return
 
-        # Seleciona as N primeiras ofertas
         ofertas_para_enviar = ofertas_novas.head(numero_de_ofertas)
-        
         print(f"Enviando {len(ofertas_para_enviar)} ofertas...")
         
+        import asyncio
         for _, row in ofertas_para_enviar.iterrows():
             mensagem_formatada = formatar_oferta(row, current_exchange_rate)
             
-            # Chama a função de envio, que agora é assíncrona
-            import asyncio
+            # Executa a função assíncrona
             asyncio.run(enviar_mensagem(CHAT_ID, mensagem_formatada))
             
             product_id = row[COLUNA_ID_PRODUTO]
             ids_enviados_nesta_execucao.append(product_id)
             print(f"  -> Oferta '{row[COLUNA_PRODUTO]}' enviada.")
 
-        # Salvar os novos IDs
         if ids_enviados_nesta_execucao:
             save_sent_ids(ids_enviados_nesta_execucao)
             print(f"Rastreamento atualizado com {len(ids_enviados_nesta_execucao)} novos IDs.")
@@ -159,9 +167,8 @@ def enviar_mensagem_personalizada(mensagem):
     """Envia uma mensagem de texto simples e depois busca 4 ofertas."""
     import asyncio
     asyncio.run(enviar_mensagem(CHAT_ID, mensagem))
-    buscar_e_enviar_ofertas(4) # Envia 4 ofertas logo após a mensagem
+    buscar_e_enviar_ofertas(4) 
 
-# Mensagens Agendadas Personalizadas
 def agendar_0930():
     mensagem = "☀️ **BOM DIA, CHAT! É HORA DE ECONOMIZAR!** 🚀\n\nAcompanhe as ofertas fresquinhas para começar o dia no game!"
     enviar_mensagem_personalizada(mensagem)
@@ -184,7 +191,6 @@ def agendar_2000():
 
 # --- ⏰ AGENDAMENTO DAS FUNÇÕES ---
 def configurar_agendamento():
-    # Mensagens e 4 Ofertas
     schedule.every().day.at("09:30").do(agendar_0930) 
     schedule.every().day.at("11:00").do(agendar_1100) 
     schedule.every().day.at("13:00").do(agendar_1300) 
@@ -194,25 +200,23 @@ def configurar_agendamento():
 
 # --- 🔑 FUNÇÕES PARA COMANDOS MANUAIS (PTB) ---
 
-async def check_admin(update: Update, context) -> bool:
+async def check_admin(update: Update) -> bool:
     """Verifica se o comando foi enviado no chat privado e pelo Admin."""
     user = update.effective_user
     
-    # 1. Checa se o chat é privado
     if update.effective_chat.type != "private":
         await update.message.reply_text("Este comando só pode ser usado no chat privado com o bot.")
         return False
         
-    # 2. Checa se o ID do usuário é o ID de Administrador
     if user.id != ADMIN_USER_ID:
         await update.message.reply_text("🚫 Acesso negado. Você não é o administrador deste bot.")
         return False
     
     return True
 
-async def start_command(update: Update, context) -> None:
+async def start_command(update: Update, context: CallbackContext) -> None:
     """Comando /start: Envia uma oferta aleatória do feed (Admin Only)."""
-    if not await check_admin(update, context):
+    if not await check_admin(update):
         return
 
     await update.message.reply_text("Buscando uma oferta aleatória para envio...")
@@ -220,13 +224,11 @@ async def start_command(update: Update, context) -> None:
     current_exchange_rate = get_exchange_rate()
     
     try:
-        # Carrega o feed
         feed_response = requests.get(PLANILHA_URL, timeout=30)
         feed_response.raise_for_status()
         data = io.StringIO(feed_response.content.decode('utf-8'))
         df = pd.read_csv(data)
         
-        # Filtra e remove os já enviados para evitar repetição recente (opcional)
         sent_ids = load_sent_ids()
         df_filtrado = df[~df[COLUNA_ID_PRODUTO].isin(sent_ids)]
         
@@ -234,12 +236,9 @@ async def start_command(update: Update, context) -> None:
             await update.message.reply_text("O feed está vazio ou todas as ofertas já foram enviadas recentemente!")
             return
 
-        # Seleciona uma oferta aleatória
         row = df_filtrado.sample(n=1).iloc[0]
-        
         mensagem_formatada = formatar_oferta(row, current_exchange_rate)
         
-        # Envia para o canal principal
         if await enviar_mensagem(CHAT_ID, mensagem_formatada):
             await update.message.reply_text(f"✅ Oferta aleatória ({row[COLUNA_PRODUTO]}) enviada com sucesso para o canal!")
             save_sent_ids([row[COLUNA_ID_PRODUTO]])
@@ -250,9 +249,9 @@ async def start_command(update: Update, context) -> None:
         await update.message.reply_text(f"❌ Erro ao buscar/enviar oferta aleatória: {e}")
 
 
-async def promo_command(update: Update, context) -> None:
+async def promo_command(update: Update, context: CallbackContext) -> None:
     """Comando /promo [link]: Envia uma oferta específica (Admin Only)."""
-    if not await check_admin(update, context):
+    if not await check_admin(update):
         return
 
     if not context.args or not context.args[0].startswith("http"):
@@ -260,8 +259,6 @@ async def promo_command(update: Update, context) -> None:
         return
 
     url_do_produto = context.args[0]
-    
-    # Busca o preço no CSV (assumindo que o produto está no feed)
     await update.message.reply_text(f"Buscando detalhes do produto na URL: `{url_do_produto}`")
     
     current_exchange_rate = get_exchange_rate()
@@ -272,7 +269,6 @@ async def promo_command(update: Update, context) -> None:
         data = io.StringIO(feed_response.content.decode('utf-8'))
         df = pd.read_csv(data)
 
-        # Tenta encontrar a linha do produto no CSV
         produto_encontrado = df[df[COLUNA_LINK] == url_do_produto].head(1)
         
         if produto_encontrado.empty:
@@ -312,9 +308,11 @@ def run_scheduler_loop():
 # 2. Thread para o Bot do Telegram (Comandos)
 def run_telegram_bot_loop():
     """Função que executa o loop de escuta de comandos do Telegram."""
+    if not BOT_TOKEN:
+        print("Bot do Telegram (Comandos) não iniciado: BOT_TOKEN ausente.")
+        return
+    
     try:
-        from telegram.ext import Application, CommandHandler
-        
         application = Application.builder().token(BOT_TOKEN).build()
         
         # Handlers para os comandos
@@ -322,9 +320,11 @@ def run_telegram_bot_loop():
         application.add_handler(CommandHandler("promo", promo_command))
         
         print("Bot do Telegram (Comandos) iniciado em modo polling...")
-        application.run_polling(poll_interval=1)
+        # CORREÇÃO: run_until_terminated() é o método correto para rodar em um thread separado
+        application.run_until_terminated() 
+        
     except Exception as e:
-        print(f"ERRO CRÍTICO no Bot do Telegram: {e}")
+        print(f"ERRO CRÍTICO no Bot do Telegram (Polling falhou): {e}")
 
 # --- INÍCIO DO PROGRAMA ---
 
