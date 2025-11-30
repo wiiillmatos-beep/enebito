@@ -7,11 +7,11 @@ import io
 import json
 import random 
 import asyncio
-from flask import Flask
+from flask import Flask, request
 from threading import Thread
 from waitress import serve
 
-# Importações do Python Telegram Bot (PTB)
+# Importações do Python Telegram Bot (PTB) - Versão 20.x e superior
 from telegram import Bot, Update
 from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, CallbackContext, filters
@@ -20,6 +20,7 @@ from telegram.ext import Application, CommandHandler, CallbackContext, filters
 
 BOT_TOKEN = os.getenv("BOT_TOKEN") 
 CHAT_ID = os.getenv("CHAT_ID")
+WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://SEU_NOME_DO_SERVICO.onrender.com")
 
 # LEITURA ROBUSTA DO ADMIN_USER_ID
 admin_user_id_str = os.getenv("ADMIN_USER_ID")
@@ -30,15 +31,16 @@ else:
     ADMIN_USER_ID = 0
     
 # ** LINK DE SCRAPING ESPECÍFICO **
-SCRAPING_URL = "https://www.eneba.com/br/store/xbox-games?drms[]=xbox&page=1&regions[]=egypt&regions[]=latam&regions[]=saudi_arabia&regions[]=argentina&types[]=game" 
+SCRAPING_URL = "https://www.eneba.com/br/store/xbox-games?drms[]=xbox&page=1&regions[]=egypt&regions[]=latam&regions[]=saudi_arabi" 
 
 PRECO_MAXIMO_FILTRO_BRL = 150.00 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
 RASTREAMENTO_FILE = 'sent_offers_ids.txt' 
 
 telegram_bot = Bot(token=BOT_TOKEN or "placeholder") 
+application = None # Inicializado em main()
 
-# --- 💵 FUNÇÃO PARA BUSCAR A COTAÇÃO DE CÂMBIO (EUR/BRL) ---
+# --- DEMAIS FUNÇÕES (GET_EXCHANGE_RATE, LOAD/SAVE IDS, FORMATAR_OFERTA, PERFORM_SCRAPING) FICAM IGUAIS ---
 
 def get_exchange_rate():
     """Busca a taxa de câmbio EUR/BRL atualizada."""
@@ -50,8 +52,6 @@ def get_exchange_rate():
     except requests.exceptions.RequestException:
         print("⚠️ Erro ao obter câmbio EUR/BRL. Usando taxa fallback (5.50).")
         return 5.50
-
-# --- 💾 RASTREAMENTO E ENVIO ---
 
 def load_sent_ids():
     """Carrega IDs de ofertas já enviadas."""
@@ -72,6 +72,7 @@ async def enviar_mensagem(chat_id_destino, texto):
         return False
         
     try:
+        # Usa o objeto global 'telegram_bot'
         await telegram_bot.send_message(
             chat_id=chat_id_destino,
             text=texto,
@@ -107,8 +108,6 @@ def formatar_oferta(oferta, exchange_rate):
     )
     return mensagem
 
-# --- 🕷️ FUNÇÃO DE WEB SCRAPING ---
-
 def perform_scraping(url):
     """Extrai nome, preço e link dos produtos da Eneba usando BeautifulSoup."""
     headers = {'User-Agent': USER_AGENT}
@@ -141,7 +140,7 @@ def perform_scraping(url):
                 try:
                     price_eur = float(price_text)
                 except ValueError:
-                    price_eur = None
+                    price_eur = 0.0
             
             if name and link and price_eur:
                  ofertas.append({
@@ -186,7 +185,7 @@ def buscar_e_enviar_ofertas(numero_de_ofertas):
             try:
                 price_brl = price_eur * current_exchange_rate
                 if price_brl <= PRECO_MAXIMO_FILTRO_BRL:
-                    ofertas_filtradas.append(oferta)
+                    ofertas_para_enviar.append(oferta)
             except (TypeError, ValueError):
                 continue
 
@@ -201,6 +200,7 @@ def buscar_e_enviar_ofertas(numero_de_ofertas):
     for oferta in ofertas_para_enviar:
         mensagem_formatada = formatar_oferta(oferta, current_exchange_rate)
         
+        # Agora o envio deve usar o asyncio.run, pois não estamos mais no loop do bot
         asyncio.run(enviar_mensagem(CHAT_ID, mensagem_formatada))
         
         product_id = oferta.get('id')
@@ -211,7 +211,7 @@ def buscar_e_enviar_ofertas(numero_de_ofertas):
         save_sent_ids(ids_enviados_nesta_execucao)
         print(f"Rastreamento atualizado com {len(ids_enviados_nesta_execucao)} novos IDs.")
 
-# --- 📅 FUNÇÕES DE AGENDAMENTO ---
+# --- DEMAIS FUNÇÕES (AGENDAMENTO) FICAM IGUAIS ---
 
 def enviar_mensagem_personalizada(mensagem):
     """Envia uma mensagem de texto simples e depois busca 4 ofertas."""
@@ -367,7 +367,7 @@ async def promo_command(update: Update, context: CallbackContext) -> None:
         await update.message.reply_text(f"❌ Erro ao processar o link (Scraping falhou): {e}")
         print(f"ERRO NO COMANDO /PROMO (SCRAPING): {e}")
 
-# --- 🌐 FUNÇÕES DE SERVIÇO ---
+# --- 🌐 FUNÇÕES DE SERVIÇO (FLASK/WEBHOOK) ---
 
 app = Flask(__name__)
 PORT = int(os.environ.get("PORT", 5000))
@@ -377,15 +377,25 @@ def home():
     """Endpoint para o Render e serviços de Keep-Alive/Monitoramento."""
     return "Bot de Ofertas está online e verificando o feed...", 200
 
-# Função separada para rodar o bot do Telegram de forma não bloqueante
-def run_telegram_bot(app_instance):
-    """Inicia o Telegram Bot em sua própria thread."""
-    try:
-        print("Bot do Telegram (Comandos) iniciado em modo 'run_non_blocking' (Thread separada).")
-        # CORREÇÃO DE SINTAXE: app_instance.run_polling()
-        app_instance.run_polling() 
-    except Exception as e:
-        print(f"ERRO CRÍTICO no Bot do Telegram Thread: {e}")
+# NOVO ENDPOINT DE WEBHOOK PARA RECEBER MENSAGENS DO TELEGRAM
+@app.route('/telegram', methods=['POST'])
+async def webhook():
+    """Recebe e processa as atualizações do Telegram via Webhook."""
+    global application # Usa o objeto application configurado em main
+    
+    if not application:
+        return "Aplicação do bot não iniciada", 500
+
+    if request.method == 'POST':
+        update_json = request.get_json(force=True)
+        update = Update.de_json(update_json, telegram_bot)
+        
+        # Processa a atualização de forma assíncrona
+        async with application:
+            await application.process_update(update)
+        
+        return 'ok', 200
+    return 'Bad Request', 400
 
 # O Scheduler e o Flask são mantidos nas threads originais
 def run_scheduler_loop():
@@ -399,44 +409,53 @@ def run_scheduler_loop():
 def run_flask_server():
     global PORT
     print(f"Servidor Flask iniciado na porta {PORT} (Keep Alive) usando Waitress...")
+    # Waitress é um servidor WSGI de produção
     serve(app, host='0.0.0.0', port=PORT)
 
 # --- INÍCIO DO PROGRAMA ---
 
+async def set_webhook_url(app_instance, url):
+    """Define a URL do Webhook no Telegram."""
+    try:
+        await app_instance.bot.set_webhook(url=url)
+        print(f"✅ Webhook definido com sucesso para: {url}")
+    except Exception as e:
+        print(f"❌ ERRO ao definir o Webhook: {e}")
+
 def main():
+    global application # Define a aplicação do bot no escopo global
     print("===========================================")
     print("  Iniciando Bot de Ofertas Híbrido...      ")
     print("===========================================")
     
-    # DEBUG: VALORES LIDOS DO RENDER
+    # DEBUG: VALORES LIDOS
     print(f"DEBUG: ADMIN_USER_ID lido: {ADMIN_USER_ID}")
     print(f"DEBUG: BOT_TOKEN lido (tamanho): {len(BOT_TOKEN) if BOT_TOKEN else 'None'}")
     print(f"DEBUG: CHAT_ID lido: {CHAT_ID}")
+    print(f"DEBUG: WEBHOOK_URL BASE: {WEBHOOK_URL}")
     
     if not BOT_TOKEN:
         print("ERRO: BOT_TOKEN não configurado. Não é possível iniciar o Bot do Telegram.")
         return
 
-    # 1. Configura a aplicação do Telegram
+    # 1. Configura a aplicação do Telegram (sem o loop de polling)
     application = Application.builder().token(BOT_TOKEN).build()
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("promo", promo_command))
+    
+    # Define o Webhook (URL Completa)
+    full_webhook_url = f"{WEBHOOK_URL}/telegram"
+    asyncio.run(set_webhook_url(application, full_webhook_url))
 
-
-    # 2. Inicia o Bot do Telegram em uma thread separada para isolá-lo
-    telegram_thread = Thread(target=run_telegram_bot, args=(application,))
-    telegram_thread.start()
-
-    # 3. Inicia o Servidor Flask (Keep Alive) e o Scheduler em threads separadas.
-    flask_thread = Thread(target=run_flask_server)
-    flask_thread.start()
+    # 2. Inicia o Servidor Flask (Webserver/Webhook) e o Scheduler em threads separadas.
+    # O Flask agora gerencia a thread principal para o Webhook
     
     scheduler_thread = Thread(target=run_scheduler_loop)
     scheduler_thread.start()
-    
-    time.sleep(2) 
-    
-    # A thread principal termina aqui, mas as threads secundárias mantêm o processo vivo.
+
+    # O servidor Flask roda na thread principal (como é o padrão para Webhooks)
+    run_flask_server()
+
 
 if __name__ == '__main__':
     main()
