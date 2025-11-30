@@ -122,17 +122,19 @@ async def send_oferta_command(update: Update, context: CallbackContext) -> None:
 
     link_afiliado = transformar_em_afiliado(url_original)
     
-    # Template da mensagem para o canal
+    # Template da mensagem para o canal (com nova instrução)
     mensagem_canal = (
-        f"🎮 **{nome_jogo}**\n\n"
-        f"💰 Preço: **{preco_brl_formatado}**\n\n"
-        # O link é formatado como código. Isso o torna não-clicável, mas permite que o Telegram 
-        # gere a pré-visualização da imagem.
-        f"<code>{url_original}</code>"
+        f"🎮 {nome_jogo}\n\n"
+        f"💰 Preço: {preco_brl_formatado}\n\n"
+        # Instrução clara para o usuário
+        f"🚨 **Atenção!** Para garantir que você apoie o canal, use **SEMPRE** o botão abaixo, e **NÃO** o link de 'Ver Produto'.\n\n"
+        # Link discreto e clicável para garantir a pré-visualização da imagem
+        f"[Ver Produto]({url_original})" 
     )
 
     # Cria o Botão Clicável (Inline Keyboard)
-    keyboard = [[InlineKeyboardButton("🛒 COMPRE AGORA E APOIE O CANAL! 🛒", url=link_afiliado)]]
+    # ALTERAÇÃO AQUI: Adicionando o emoji de fogo 🔥
+    keyboard = [[InlineKeyboardButton("🛒 🔥 COMPRE AGORA E APOIE O CANAL! 🔥 🛒", url=link_afiliado)]]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     # Envia a mensagem para o canal público
@@ -141,12 +143,12 @@ async def send_oferta_command(update: Update, context: CallbackContext) -> None:
             chat_id=CHAT_ID_DESTINO,
             text=mensagem_canal,
             reply_markup=reply_markup,
-            parse_mode=ParseMode.HTML, # IMPORTANTE: Necessário para o <code> funcionar
-            disable_web_page_preview=False # Permite que o Telegram gere a pré-visualização
+            parse_mode=ParseMode.MARKDOWN, 
+            disable_web_page_preview=False 
         )
         await update.message.reply_text(
             f"✅ Oferta de afiliado enviada com sucesso para o canal: `{CHAT_ID_DESTINO}`\n"
-            "Pré-visualização da imagem gerada, link no corpo da mensagem não é clicável.",
+            "Pré-visualização da imagem garantida, com instrução clara para usar o botão de afiliado.",
             parse_mode=ParseMode.MARKDOWN
         )
     except Exception as e:
