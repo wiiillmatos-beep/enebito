@@ -26,7 +26,6 @@ admin_user_id_str = os.getenv("ADMIN_USER_ID")
 if admin_user_id_str and admin_user_id_str.isdigit():
     ADMIN_USER_ID = int(admin_user_id_str)
 else:
-    # Este print aparece no log, mas não é o que estamos procurando agora.
     print("⚠️ ERRO: ADMIN_USER_ID não definido ou não é um número. Comandos de admin serão desativados.")
     ADMIN_USER_ID = 0
     
@@ -142,7 +141,7 @@ def perform_scraping(url):
                 try:
                     price_eur = float(price_text)
                 except ValueError:
-                    price_eur = None
+                    price_eur = 0.0
             
             if name and link and price_eur:
                  ofertas.append({
@@ -378,56 +377,9 @@ def home():
     """Endpoint para o Render e serviços de Keep-Alive/Monitoramento."""
     return "Bot de Ofertas está online e verificando o feed...", 200
 
-def run_scheduler_loop():
-    """Função que executa o loop do scheduler."""
-    configurar_agendamento()
-    print("Iniciando loop do scheduler em background...")
-    while True:
-        schedule.run_pending()
-        time.sleep(1)
-
-def run_flask_server():
-    global PORT
-    print(f"Servidor Flask iniciado na porta {PORT} (Keep Alive) usando Waitress...")
-    serve(app, host='0.0.0.0', port=PORT)
-
-# --- INÍCIO DO PROGRAMA ---
-
-def main():
-    print("===========================================")
-    print("  Iniciando Bot de Ofertas Híbrido...      ")
-    print("===========================================")
-    
-    # --- TEMPORARY DEBUG PRINT: VALORES LIDOS DO RENDER ---
-    print(f"DEBUG: ADMIN_USER_ID lido: {ADMIN_USER_ID}")
-    print(f"DEBUG: BOT_TOKEN lido (tamanho): {len(BOT_TOKEN) if BOT_TOKEN else 'None'}")
-    print(f"DEBUG: CHAT_ID lido: {CHAT_ID}")
-    # -----------------------------------------------------
-
-    if not BOT_TOKEN:
-        print("ERRO: BOT_TOKEN não configurado. Não é possível iniciar o Bot do Telegram.")
-        return
-
-    # 1. Inicia o Servidor Flask e o Scheduler em threads separadas.
-    flask_thread = Thread(target=run_flask_server)
-    flask_thread.start()
-    
-    scheduler_thread = Thread(target=run_scheduler_loop)
-    scheduler_thread.start()
-    
-    time.sleep(2) 
-
-    # 2. Inicia o Bot do Telegram (Comandos) na thread principal.
+# Função separada para rodar o bot do Telegram de forma não bloqueante
+def run_telegram_bot(app_instance):
+    """Inicia o Telegram Bot em sua própria thread."""
     try:
-        application = Application.builder().token(BOT_TOKEN).build()
-        application.add_handler(CommandHandler("start", start_command))
-        application.add_handler(CommandHandler("promo", promo_command))
-        
-        print("Bot do Telegram (Comandos) iniciado em modo 'run_forever' (PTB na thread principal).")
-        application.run_forever() 
-        
-    except Exception as e:
-        print(f"ERRO CRÍTICO no Bot do Telegram: {e}")
-
-if __name__ == '__main__':
-    main()
+        print("Bot do Telegram (Comandos) iniciado em modo 'run_non_blocking' (Thread separada).")
+        app_instance.run_
