@@ -287,9 +287,6 @@ def main():
     flask_thread = Thread(target=run_flask_server)
     flask_thread.start()
 
-    # NOVO: Exclui o webhook antes de iniciar o polling, resolvendo o conflito.
-    asyncio.run(init_application(application))
-
     # Handlers do Telegram (deve vir depois da criação da application)
     application.add_handler(CommandHandler("start", start_command))
     # Filtro para identificar URLs da Eneba (o Regex 'https?:\/\/...' faz o trabalho)
@@ -298,6 +295,8 @@ def main():
     # 4. Inicia o Polling na thread principal (mantém o processo vivo)
     logger.info("Iniciando Polling do Telegram Bot na thread principal...")
     try:
+        # CORRIGIDO: Executa a função de limpeza do webhook antes do polling
+        application.run_in_thread(init_application(application), drop_dependency=True)
         # run_polling é síncrono e mantém o programa em execução
         application.run_polling(poll_interval=5, timeout=30)
     except Exception as e:
