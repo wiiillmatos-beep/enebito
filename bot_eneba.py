@@ -65,21 +65,61 @@ def scrape_detalhes_produto(url: str) -> dict:
         response.raise_for_status()
         soup = BeautifulSoup(response.text, 'html.parser')
 
-        # Seletor para o título do produto (pdp-title)
+        # --- Tenta encontrar o Nome do Produto ---
+        # 1. Tenta o seletor mais específico
         name_tag = soup.find('h1', class_=lambda c: c and 'pdp-title' in c) 
+        if not name_tag:
+            # 2. Tenta um seletor mais genérico (por exemplo, um <h1> principal)
+            name_tag = soup.find('h1')
+            
         name = name_tag.text.strip() if name_tag else "Produto Desconhecido"
 
-        # Seletor para o preço (pdp-price)
+        # --- Tenta encontrar o Preço do Produto ---
         price_tag = soup.find('div', class_=lambda c: c and 'pdp-price' in c) 
+        
         price_eur = 0.0
         if price_tag:
              # Limpa o texto do preço e tenta converter para float
-             price_text = price_tag.text.replace('$', '').replace('€', '').replace('R', '').replace(',', '.').strip()
+             price_text = price_tag.text
+             # Remove moedas e converte vírgula para ponto
+             price_text = price_text.replace('$', '').replace('€', '').replace('R', '').replace(',', '.').strip()
              try:
                 price_eur = float(price_text)
              except ValueError:
                 price_eur = 0.0
-
+        
+        # Se o preço for zero, tenta buscar em outro lugar
+        if price_eur == 0.0:
+            # Tenta encontrar o preço em tags de metadados JSON-LD (comum em e-commerce)
+            script_tags = soup.find_all('script', type='application/ld+json')
+            for script in script_tags:
+                try:
+                    import json
+                    data = json.loads(script.string)
+                    # Procura por Offers ou Product
+                    if isinstance(data, dict) and data.get('@type') == 'Product' and 'offers' in data:
+                        offer = data['offers']
+                        # Pega o primeiro preço disponível
+                        if isinstance(offer, list): offer = offer[0]
+                        
+                        if 'price' in offer and 'priceCurrency' in offer and offer['priceCurrency'] == 'EUR':
+                            price_eur = float(offer['price'])
+                            logger.info("Preço encontrado via JSON-LD metadados.")
+                            break
+                    elif isinstance(data, list):
+                        # Se for uma lista de objetos JSON-LD
+                        for item in data:
+                            if item.get('@type') == 'Product' and 'offers' in item:
+                                offer = item['offers']
+                                if isinstance(offer, list): offer = offer[0]
+                                if 'price' in offer and 'priceCurrency' in offer and offer['priceCurrency'] == 'EUR':
+                                    price_eur = float(offer['price'])
+                                    logger.info("Preço encontrado via JSON-LD metadados.")
+                                    break
+                except Exception:
+                    continue # Ignora scripts JSON-LD inválidos
+            
+            
         return {
             'name': name,
             'price_eur': price_eur, 
@@ -132,9 +172,10 @@ async def handle_link(update: Update, context: CallbackContext) -> None:
     # Executa as funções síncronas em um thread pool para não bloquear o loop asyncio
     detalhes = await asyncio.to_thread(scrape_detalhes_produto, url_original)
     
+    # Verifica a falha no scraping
     if detalhes['name'] == 'ERRO DE SCRAPING' or detalhes['price_eur'] == 0.0:
         await update.message.reply_text(
-            f"❌ Falha ao extrair o nome/preço do produto no link. Verifique o link."
+            f"❌ Falha ao extrair o nome/preço do produto no link. Verifique se o link está correto e se o produto está disponível."
         )
         return
         
