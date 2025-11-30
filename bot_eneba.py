@@ -251,7 +251,8 @@ def run_flask_server():
 # --- 🏃 INÍCIO DO PROGRAMA ---
 
 async def init_application(application_instance: Application):
-    """Função assíncrona para excluir o webhook antes de iniciar o polling."""
+    """Função assíncrona para excluir o webhook antes de iniciar o polling.
+       Esta função é executada via hook post_init."""
     logger.info("Verificando e excluindo qualquer webhook remanescente para evitar conflitos...")
     try:
         # Chama a API do Telegram para garantir que o Webhook seja removido
@@ -281,7 +282,9 @@ def main():
     logger.info(f"DEBUG: Porta lida: {PORT}")
 
     # 2. Configura a aplicação do Telegram (Polling)
-    application = Application.builder().token(BOT_TOKEN).build()
+    # NOVO: Adicionamos 'post_init' aqui. A função init_application será chamada de forma assíncrona
+    # antes do polling iniciar, dentro do loop de eventos gerenciado pela PTB.
+    application = Application.builder().token(BOT_TOKEN).post_init(init_application).build()
     
     # 3. Inicia o Web Server (Keep-Alive) em uma thread separada
     flask_thread = Thread(target=run_flask_server)
@@ -295,9 +298,7 @@ def main():
     # 4. Inicia o Polling na thread principal (mantém o processo vivo)
     logger.info("Iniciando Polling do Telegram Bot na thread principal...")
     try:
-        # CORRIGIDO: Executa a função de limpeza do webhook antes do polling
-        application.run_in_thread(init_application(application), drop_dependency=True)
-        # run_polling é síncrono e mantém o programa em execução
+        # A limpeza do webhook agora é feita de forma nativa e segura através do 'post_init'
         application.run_polling(poll_interval=5, timeout=30)
     except Exception as e:
         logger.critical(f"ERRO CRÍTICO no Polling (Thread Principal): {e}")
