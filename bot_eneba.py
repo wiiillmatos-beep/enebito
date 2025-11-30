@@ -63,9 +63,9 @@ async def start_command(update: Update, context: CallbackContext) -> None:
         "**Modo de Uso:**\n"
         "Como administrador, use o comando `/oferta` para enviar ofertas para o canal.\n\n"
         "**Formato:**\n"
-        "`/oferta <link da eneba> // <Nome do Jogo> // <Preço em BRL>`\n\n"
+        "`/oferta <link da eneba> >> <Nome do Jogo> >> <Preço em BRL>`\n\n"
         "**Exemplo:**\n"
-        "`/oferta https://www.eneba.com/exemplo // Nome do Jogo Teste // R$123,45`\n\n"
+        "`/oferta https://www.eneba.com/exemplo >> Nome do Jogo Teste >> R$123,45`\n\n"
         "O bot montará a mensagem com a imagem de pré-visualização, o nome, o preço e um botão de compra com seu link de afiliado.",
         parse_mode=ParseMode.MARKDOWN
     )
@@ -79,19 +79,19 @@ async def send_oferta_command(update: Update, context: CallbackContext) -> None:
     full_text = context.args
     if not full_text:
         await update.message.reply_text(
-            "❌ Formato incorreto. Use: `/oferta <link da eneba> // <Nome do Jogo> // <Preço em BRL>`",
+            "❌ Formato incorreto. Use: `/oferta <link da eneba> >> <Nome do Jogo> >> <Preço em BRL>`",
             parse_mode=ParseMode.MARKDOWN
         )
         return
 
-    # Junta os argumentos para o caso de espaços e então divide pelo novo separador " // "
+    # Junta os argumentos para o caso de espaços e então divide pelo novo separador " >> "
     full_text_str = " ".join(full_text)
-    parts = full_text_str.split(' // ', 2) # Divide em no máximo 3 partes
+    parts = full_text_str.split(' >> ', 2) # Divide em no máximo 3 partes
     
     if len(parts) != 3:
         await update.message.reply_text(
-            "❌ Formato incorreto. Certifique-se de usar `//` para separar Link, Nome e Preço.\n"
-            "Ex: `/oferta https://www.eneba.com/exemplo // Nome do Jogo Teste // R$123,45`",
+            "❌ Formato incorreto. Certifique-se de usar `>>` para separar Link, Nome e Preço.\n"
+            "Ex: `/oferta https://www.eneba.com/exemplo >> Nome do Jogo Teste >> R$123,45`",
             parse_mode=ParseMode.MARKDOWN
         )
         return
@@ -126,7 +126,9 @@ async def send_oferta_command(update: Update, context: CallbackContext) -> None:
     mensagem_canal = (
         f"🎮 **{nome_jogo}**\n\n"
         f"💰 Preço: **{preco_brl_formatado}**\n\n"
-        f"<code>{url_original}</code>" # Link para pré-visualização (não clicável)
+        # O link é formatado como código. Isso o torna não-clicável, mas permite que o Telegram 
+        # gere a pré-visualização da imagem.
+        f"<code>{url_original}</code>"
     )
 
     # Cria o Botão Clicável (Inline Keyboard)
@@ -139,12 +141,12 @@ async def send_oferta_command(update: Update, context: CallbackContext) -> None:
             chat_id=CHAT_ID_DESTINO,
             text=mensagem_canal,
             reply_markup=reply_markup,
-            parse_mode=ParseMode.HTML, # IMPORTANTE: Para o <code> funcionar
+            parse_mode=ParseMode.HTML, # IMPORTANTE: Necessário para o <code> funcionar
             disable_web_page_preview=False # Permite que o Telegram gere a pré-visualização
         )
         await update.message.reply_text(
             f"✅ Oferta de afiliado enviada com sucesso para o canal: `{CHAT_ID_DESTINO}`\n"
-            "Pré-visualização da imagem gerada, link no corpo da mensagem não clicável.",
+            "Pré-visualização da imagem gerada, link no corpo da mensagem não é clicável.",
             parse_mode=ParseMode.MARKDOWN
         )
     except Exception as e:
