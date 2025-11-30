@@ -28,7 +28,8 @@ ADMIN_USER_ID = os.getenv("ADMIN_USER_ID")
 # Parâmetros fixos do seu link de afiliado
 AFILIADO_ID = "WiillzeraTV"
 PARAMS_AFILIADO = f"af_id={AFILIADO_ID}&currency=BRL&region=global&utm_source={AFILIADO_ID}&utm_medium=infl"
-USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+# USER AGENT MAIS RECENTE E DETALHADO
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
 
 # Variáveis globais
 application = None 
@@ -58,11 +59,20 @@ def transformar_em_afiliado(url_original: str) -> str:
 
 def scrape_detalhes_produto(url: str) -> dict:
     """Extrai nome e preço de uma página de produto específica da Eneba (Síncrono)."""
-    headers = {'User-Agent': USER_AGENT}
+    # HEADERS OTIMIZADOS para simular um navegador e evitar bloqueios
+    headers = {
+        'User-Agent': USER_AGENT,
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'pt-BR,pt;q=0.5',
+        'Connection': 'keep-alive',
+    }
     
     try:
         response = requests.get(url, headers=headers, timeout=15)
-        response.raise_for_status()
+        # NOVO LOG: Mostra o status da requisição para debug
+        logger.info(f"Status Code da requisição para Eneba: {response.status_code}") 
+        
+        response.raise_for_status() # Levanta erro para 4xx ou 5xx (bloqueio ou erro de servidor)
         soup = BeautifulSoup(response.text, 'html.parser')
 
         # --- Tenta encontrar o Nome do Produto ---
@@ -88,7 +98,7 @@ def scrape_detalhes_produto(url: str) -> dict:
              except ValueError:
                 price_eur = 0.0
         
-        # Se o preço for zero, tenta buscar em outro lugar
+        # Se o preço for zero, tenta buscar em outro lugar (Metadados JSON-LD)
         if price_eur == 0.0:
             # Tenta encontrar o preço em tags de metadados JSON-LD (comum em e-commerce)
             script_tags = soup.find_all('script', type='application/ld+json')
@@ -113,12 +123,15 @@ def scrape_detalhes_produto(url: str) -> dict:
                                 offer = item['offers']
                                 if isinstance(offer, list): offer = offer[0]
                                 if 'price' in offer and 'priceCurrency' in offer and offer['priceCurrency'] == 'EUR':
-                                    price_eur = float(offer['price'])
+                                    price_eur = float(item['offers']['price'])
                                     logger.info("Preço encontrado via JSON-LD metadados.")
                                     break
                 except Exception:
                     continue # Ignora scripts JSON-LD inválidos
             
+        # Log de aviso se o preço falhar mesmo com nome encontrado
+        if name != "Produto Desconhecido" and price_eur == 0.0:
+             logger.warning(f"Nome encontrado ('{name}'), mas preço (0.0) falhou na extração. A página pode estar bloqueada ou depender de JS.")
             
         return {
             'name': name,
@@ -126,6 +139,10 @@ def scrape_detalhes_produto(url: str) -> dict:
             'url': url
         }
 
+    except requests.exceptions.HTTPError as e:
+        # Se cair aqui, o site bloqueou a requisição (Status 403, 404, etc.)
+        logger.error(f"ERRO HTTP ({response.status_code}) ao acessar {url}: A Eneba pode estar bloqueando o acesso do bot. Tente mudar o USER_AGENT.")
+        return {'name': 'ERRO DE SCRAPING', 'price_eur': 0.0, 'url': url}
     except requests.exceptions.RequestException as e:
         logger.error(f"ERRO DE CONEXÃO/SCRAPING para {url}: {e}")
         return {'name': 'ERRO DE SCRAPING', 'price_eur': 0.0, 'url': url}
