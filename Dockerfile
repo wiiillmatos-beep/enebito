@@ -1,15 +1,18 @@
-# Imagem base do Python
-FROM python:3.11-slim
+# Usa uma imagem base oficial do Python (versão 3.10 ou a mais estável)
+FROM python:3.10-slim
 
-# Diretório de trabalho dentro do container
-WORKDIR /app
+# Define a pasta de trabalho dentro do contêiner
+WORKDIR /usr/src/app
 
-# Copia e instala dependências
-COPY requirements.txt .
+# Copia o arquivo de dependências (requirements.txt)
+COPY requirements.txt ./
+
+# Instala as dependências do Python
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copia todo o código do projeto
+# Copia todos os arquivos do seu projeto (incluindo bot_eneba.py)
 COPY . .
 
-# Comando para iniciar o bot
-CMD ["python", "bot.py"]
+# Comando principal que executa o script do bot
+# Este comando substitui a necessidade do Procfile
+CMD ["python", "bot_eneba.py"]
