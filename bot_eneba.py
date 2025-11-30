@@ -175,7 +175,6 @@ def agendar_1100():
     enviar_mensagem_personalizada(mensagem)
 
 def agendar_1225():
-    # NOVO HORÁRIO
     mensagem = "⏳ **ALERTA DE OFERTAS PÓS-ALMOÇO!** 🎮\n\nEstá na hora perfeita para caçar aquele jogo que ficou na lista. Veja 4 ofertas que acabaram de cair!"
     enviar_mensagem_personalizada(mensagem)
 
@@ -195,7 +194,7 @@ def agendar_2000():
 def configurar_agendamento():
     schedule.every().day.at("09:30").do(agendar_0930) 
     schedule.every().day.at("11:00").do(agendar_1100) 
-    schedule.every().day.at("12:25").do(agendar_1225) # NOVO HORÁRIO ADICIONADO
+    schedule.every().day.at("12:45").do(agendar_1225)
     schedule.every().day.at("13:00").do(agendar_1300) 
     schedule.every().day.at("17:00").do(agendar_1700) 
     schedule.every().day.at("20:00").do(agendar_2000) 
@@ -289,7 +288,7 @@ async def promo_command(update: Update, context: CallbackContext) -> None:
     except Exception as e:
         await update.message.reply_text(f"❌ Erro ao processar o link: {e}")
 
-# --- 🌐 INICIALIZAÇÃO E INTEGRAÇÃO FLASK/PTB ---
+# --- 🌐 FUNÇÕES DE SERVIÇO (Keep Alive e Scheduler) ---
 
 app = Flask(__name__)
 PORT = int(os.environ.get("PORT", 5000))
@@ -299,7 +298,6 @@ def home():
     """Endpoint para o Render e serviços de Keep-Alive/Monitoramento."""
     return "Bot de Ofertas está online e verificando o feed...", 200
 
-# 1. Thread para o Scheduler (Agendamento)
 def run_scheduler_loop():
     """Função que executa o loop do scheduler."""
     configurar_agendamento()
@@ -308,43 +306,42 @@ def run_scheduler_loop():
         schedule.run_pending()
         time.sleep(1)
 
-# 2. Thread para o Bot do Telegram (Comandos)
-def run_telegram_bot_loop():
-    """Função que executa o loop de escuta de comandos do Telegram."""
-    if not BOT_TOKEN:
-        print("Bot do Telegram (Comandos) não iniciado: BOT_TOKEN ausente.")
-        return
-    
-    try:
-        application = Application.builder().token(BOT_TOKEN).build()
-        
-        # Handlers para os comandos
-        application.add_handler(CommandHandler("start", start_command))
-        application.add_handler(CommandHandler("promo", promo_command))
-        
-        print("Bot do Telegram (Comandos) iniciado em modo polling (PTB).")
-        
-        # Usa run_polling() para iniciar o loop de escuta de comandos no thread.
-        application.run_polling(poll_interval=1) 
-        
-    except Exception as e:
-        print(f"ERRO CRÍTICO no Bot do Telegram (Polling falhou): {e}")
+def run_flask_server():
+    """Função que executa o servidor Flask em um thread."""
+    global PORT # Garante que estamos usando a variável global
+    print(f"Servidor Flask iniciado na porta {PORT} (Keep Alive)...")
+    app.run(host='0.0.0.0', port=PORT)
 
 # --- INÍCIO DO PROGRAMA ---
 
-if __name__ == '__main__':
+def main():
     print("===========================================")
     print("  Iniciando Bot de Ofertas Híbrido...      ")
     print("===========================================")
     
-    # Inicia o loop do Scheduler (agendamento)
+    if not BOT_TOKEN:
+        print("ERRO: BOT_TOKEN não configurado. Não é possível iniciar o Bot do Telegram.")
+        return
+
+    # 1. Inicia o Servidor Flask (Keep Alive) e o Scheduler em threads
+    flask_thread = Thread(target=run_flask_server)
+    flask_thread.start()
+    
     scheduler_thread = Thread(target=run_scheduler_loop)
     scheduler_thread.start()
     
-    # Inicia o loop do Bot (comandos)
-    telegram_thread = Thread(target=run_telegram_bot_loop)
-    telegram_thread.start()
+    # 2. Inicia o Bot do Telegram (Comandos) na thread principal (Polling)
+    # Esta é a correção final: Usar a thread principal para o polling PTB.
+    try:
+        application = Application.builder().token(BOT_TOKEN).build()
+        application.add_handler(CommandHandler("start", start_command))
+        application.add_handler(CommandHandler("promo", promo_command))
+        
+        print("Bot do Telegram (Comandos) iniciado em modo polling (PTB na thread principal).")
+        application.run_polling(poll_interval=1)
+        
+    except Exception as e:
+        print(f"ERRO CRÍTICO no Bot do Telegram: {e}")
 
-    # Inicia o servidor Flask na thread principal (para que o Render não durma)
-    print(f"Servidor Flask iniciado na porta {PORT} (Keep Alive)...")
-    app.run(host='0.0.0.0', port=PORT)
+if __name__ == '__main__':
+    main()
