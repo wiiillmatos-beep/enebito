@@ -172,7 +172,8 @@ async def start_command(update: Update, context: CallbackContext) -> None:
     )
 
 async def handle_link(update: Update, context: CallbackContext) -> None:
-    """Processa o link enviado pelo administrador, faz o scraping e envia a oferta."""
+    """Processa o link enviado pelo administrador, faz o scraping e envia a oferta.
+       Inclui fallback se o scraping falhar."""
     
     if not await check_admin(update):
         return
@@ -188,28 +189,42 @@ async def handle_link(update: Update, context: CallbackContext) -> None:
     # Executa as funções síncronas em um thread pool para não bloquear o loop asyncio
     detalhes = await asyncio.to_thread(scrape_detalhes_produto, url_original)
     
-    # Verifica a falha no scraping
-    if detalhes['name'] == 'ERRO DE SCRAPING' or detalhes['price_eur'] == 0.0:
-        await update.message.reply_text(
-            f"❌ Falha ao extrair o nome/preço do produto no link. Verifique se o link está correto e se o produto está disponível."
-        )
-        return
-        
     link_afiliado = transformar_em_afiliado(url_original)
     
-    current_exchange_rate = await asyncio.to_thread(get_exchange_rate)
-    preco_brl = detalhes['price_eur'] * current_exchange_rate
-    preco_brl_formatado = f"{preco_brl:.2f}".replace('.', ',')
+    # --- NOVO: LÓGICA DE FALLBACK ---
     
-    mensagem = (
-        f"🚨 **SUPER OFERTA EXCLUSIVA!** 🚨\n\n"
-        f"🎮 **{detalhes['name']}**\n"
-        f"💰 Preço Estimado: **R$ {preco_brl_formatado}**\n"
-        f"_Preço original em EUR: €{detalhes['price_eur']:.2f}_\n\n"
-        f"Seu código de afiliado: `{AFILIADO_ID}`"
-    )
+    # Verifica a falha no scraping (produto desconhecido OU preço zero/erro)
+    scraping_failed = detalhes['name'] == 'ERRO DE SCRAPING' or detalhes['price_eur'] == 0.0
+    
+    if scraping_failed:
+        # Mensagem para o ADMINISTRADOR (Alerta)
+        await update.message.reply_text(
+            "⚠️ ALERTA: Falha ao extrair o nome/preço do produto. Enviando uma postagem genérica com o link de afiliado como fallback."
+        )
 
-    # Cria o Botão Clicável (Inline Keyboard)
+        # Mensagem para o CANAL (Fallback)
+        mensagem_canal = (
+            f"🛒 **OFERTA ESPECIAL NA ENEBA!** 🛒\n\n"
+            f"Um novo produto foi encontrado. Não foi possível carregar o nome/preço automaticamente. \n\n"
+            f"Seu código de afiliado: `{AFILIADO_ID}`"
+        )
+        
+    else:
+        # Mensagem para o CANAL (Sucesso, lógica original)
+        current_exchange_rate = await asyncio.to_thread(get_exchange_rate)
+        preco_brl = detalhes['price_eur'] * current_exchange_rate
+        preco_brl_formatado = f"{preco_brl:.2f}".replace('.', ',')
+        
+        mensagem_canal = (
+            f"🚨 **SUPER OFERTA EXCLUSIVA!** 🚨\n\n"
+            f"🎮 **{detalhes['name']}**\n"
+            f"💰 Preço Estimado: **R$ {preco_brl_formatado}**\n"
+            f"_Preço original em EUR: €{detalhes['price_eur']:.2f}_\n\n"
+            f"Seu código de afiliado: `{AFILIADO_ID}`"
+        )
+
+
+    # Cria o Botão Clicável (Inline Keyboard) - O link de afiliado é o mesmo em ambos os casos
     keyboard = [[InlineKeyboardButton("🔥 COMPRE AQUI E APOIE O CANAL! 🔥", url=link_afiliado)]]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
@@ -217,16 +232,19 @@ async def handle_link(update: Update, context: CallbackContext) -> None:
     try:
         await context.bot.send_message(
             chat_id=CHAT_ID_DESTINO,
-            text=mensagem,
+            text=mensagem_canal,
             reply_markup=reply_markup,
             parse_mode=ParseMode.MARKDOWN
         )
-        await update.message.reply_text(
-            f"✅ Oferta de afiliado enviada com sucesso para o canal: {CHAT_ID_DESTINO}\n"
-        )
+        if not scraping_failed:
+             # Só envia mensagem de sucesso ao admin se não houve falha no scraping
+            await update.message.reply_text(
+                f"✅ Oferta de afiliado enviada com sucesso para o canal: {CHAT_ID_DESTINO}\n"
+            )
     except Exception as e:
-        await update.message.reply_text(f"❌ ERRO ao enviar para o canal. Verifique permissões/ID.")
+        await update.message.reply_text(f"❌ ERRO CRÍTICO ao enviar para o canal. Verifique permissões/ID. O link gerado foi: {link_afiliado}")
         logger.error(f"ERRO DE ENVIO para {CHAT_ID_DESTINO}: {e}")
+        # --- FIM DA LÓGICA DE FALLBACK ---
 
 
 # --- 🌐 WEB SERVICE (KEEP-ALIVE) ---
