@@ -9,7 +9,7 @@ import random
 import asyncio
 from flask import Flask
 from threading import Thread
-from waitress import serve # Importado para uso no servidor Flask
+from waitress import serve
 
 # Importações do Python Telegram Bot (PTB)
 from telegram import Bot, Update
@@ -26,6 +26,7 @@ admin_user_id_str = os.getenv("ADMIN_USER_ID")
 if admin_user_id_str and admin_user_id_str.isdigit():
     ADMIN_USER_ID = int(admin_user_id_str)
 else:
+    # Este print aparece no log, mas não é o que estamos procurando agora.
     print("⚠️ ERRO: ADMIN_USER_ID não definido ou não é um número. Comandos de admin serão desativados.")
     ADMIN_USER_ID = 0
     
@@ -397,6 +398,12 @@ def main():
     print("  Iniciando Bot de Ofertas Híbrido...      ")
     print("===========================================")
     
+    # --- TEMPORARY DEBUG PRINT: VALORES LIDOS DO RENDER ---
+    print(f"DEBUG: ADMIN_USER_ID lido: {ADMIN_USER_ID}")
+    print(f"DEBUG: BOT_TOKEN lido (tamanho): {len(BOT_TOKEN) if BOT_TOKEN else 'None'}")
+    print(f"DEBUG: CHAT_ID lido: {CHAT_ID}")
+    # -----------------------------------------------------
+
     if not BOT_TOKEN:
         print("ERRO: BOT_TOKEN não configurado. Não é possível iniciar o Bot do Telegram.")
         return
@@ -417,7 +424,6 @@ def main():
         application.add_handler(CommandHandler("promo", promo_command))
         
         print("Bot do Telegram (Comandos) iniciado em modo 'run_forever' (PTB na thread principal).")
-        # CORREÇÃO: Troca run_polling() por run_forever() para evitar erro de cleanup
         application.run_forever() 
         
     except Exception as e:
