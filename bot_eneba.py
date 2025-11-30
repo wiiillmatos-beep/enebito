@@ -1,11 +1,12 @@
-import pandas as pd
 import requests
+from bs4 import BeautifulSoup
 import time
 import schedule
 import os
 import io
 import json
 import random 
+import asyncio
 from flask import Flask
 from threading import Thread
 
@@ -16,82 +17,51 @@ from telegram.ext import Application, CommandHandler, CallbackContext, filters
 
 # --- ⚙️ CONFIGURAÇÕES (LENDO VARIÁVEIS DE AMBIENTE) ---
 
-# IDs essenciais lidos do ambiente do Render
 BOT_TOKEN = os.getenv("BOT_TOKEN") 
 CHAT_ID = os.getenv("CHAT_ID")
-# Lê o ID do admin. O valor padrão 0 garante que a conversão para int funcione
 ADMIN_USER_ID = int(os.getenv("ADMIN_USER_ID", 0)) 
 
-# A mensagem de erro será impressa, mas não impede o Flask de iniciar.
-if not BOT_TOKEN or not CHAT_ID or ADMIN_USER_ID == 0:
-    print("ERRO CRÍTICO: Token, Chat ID ou Admin ID não configurados no ambiente. Os comandos manuais não funcionarão.")
+# ** ALERTA: SUBSTITUA ESTE LINK **
+# Use a URL exata da página de ofertas da Eneba que você quer monitorar (ex: Xbox)
+SCRAPING_URL = "https://www.eneba.com/store/xbox-games?page=1&sortBy=PRICE_ASC" 
 
-# Link do seu feed de produtos em CSV da Eneba
-PLANILHA_URL = "https://www.eneba.com/rss/products.csv?version=3&influencer_id=WiillzeraTV"
-RASTREAMENTO_FILE = 'sent_offers_ids.txt' 
 PRECO_MAXIMO_FILTRO_BRL = 150.00 
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+RASTREAMENTO_FILE = 'sent_offers_ids.txt' 
 
-# Nomes das colunas no seu arquivo CSV
-COLUNA_ID_PRODUTO = 'id'        
-COLUNA_PRODUTO = 'name'         
-COLUNA_PRECO_USD = 'final_price' 
-COLUNA_LINK = 'url'             
-
-# Inicializa o Bot do Telegram para uso em funções (fora dos Handlers do PTB)
 telegram_bot = Bot(token=BOT_TOKEN or "placeholder") 
 
-# --- 💵 FUNÇÃO PARA BUSCAR A COTAÇÃO DE CÂMBIO ---
+# --- 💵 FUNÇÃO PARA BUSCAR A COTAÇÃO DE CÂMBIO (EUR/BRL) ---
 
 def get_exchange_rate():
-    """Busca a taxa de câmbio USD/BRL atualizada."""
-    API_URL = "https://api.exchangerate-api.com/v4/latest/USD"
+    """Busca a taxa de câmbio EUR/BRL atualizada."""
+    API_URL = "https://api.exchangerate-api.com/v4/latest/EUR"
     try:
         response = requests.get(API_URL, timeout=10) 
         response.raise_for_status() 
+        # Busca a taxa BRL dentro da lista de taxas do EUR.
         return response.json()['rates']['BRL']
     except requests.exceptions.RequestException:
-        print("⚠️ Erro ao obter câmbio. Usando taxa fallback (5.00).")
-        return 5.00 
+        print("⚠️ Erro ao obter câmbio EUR/BRL. Usando taxa fallback (5.50).")
+        return 5.50 # Taxa fallback ajustada para refletir um valor de Euro mais realista
 
-# --- 💾 RASTREAMENTO DE OFERTAS ---
+# --- 💾 RASTREAMENTO E ENVIO ---
+
 def load_sent_ids():
+    """Carrega IDs de ofertas já enviadas."""
     if not os.path.exists(RASTREAMENTO_FILE):
         return set()
     with open(RASTREAMENTO_FILE, 'r') as f:
         return set(line.strip() for line in f if line.strip())
 
 def save_sent_ids(ids_para_adicionar):
+    """Salva novos IDs de ofertas enviadas."""
     with open(RASTREAMENTO_FILE, 'a') as f:
         for product_id in ids_para_adicionar:
             f.write(f"{product_id}\n")
 
-# --- 🚀 FUNÇÕES DE FORMATAÇÃO E ENVIO ---
-
-def formatar_oferta(row, exchange_rate):
-    """Formata os dados da linha do CSV em uma mensagem com botão de compra."""
-    produto = row[COLUNA_PRODUTO]
-    try:
-        preco_usd = float(row[COLUNA_PRECO_USD])
-    except ValueError:
-        preco_usd = 0.0
-    
-    preco_brl = preco_usd * exchange_rate
-    link = row[COLUNA_LINK]
-    
-    preco_brl_formatado = f"{preco_brl:.2f}".replace('.', ',')
-    
-    mensagem = (
-        f"🔥 **NOVA OFERTA!** 🔥\n\n"
-        f"🏷️ Jogo: **{produto}**\n"
-        f"💸 Preço Estimado: **R$ {preco_brl_formatado}**\n"
-        f"_Preço em USD: ${preco_usd:.2f} | Câmbio: {exchange_rate:.4f}_\n\n"
-        f"[🛒 COMPRE AQUI! 🛒]({link})\n\n"
-        f"---"
-    )
-    return mensagem
-
 async def enviar_mensagem(chat_id_destino, texto):
-    """Função assíncrona para envio de mensagens, usando o objeto Bot."""
+    """Envia a mensagem ao Telegram."""
     if not telegram_bot.token or not chat_id_destino:
         return False
         
@@ -107,11 +77,90 @@ async def enviar_mensagem(chat_id_destino, texto):
         print(f"Erro ao enviar mensagem para {chat_id_destino}: {e}")
         return False
 
-# --- 🚀 LÓGICA DE BUSCA DE OFERTAS AGENDADAS ---
+def formatar_oferta(oferta, exchange_rate):
+    """Formata os dados extraídos em uma mensagem."""
+    produto = oferta.get('name', 'Produto Desconhecido')
+    preco_eur = oferta.get('price_usd', 0.0) # Renomeado internamente para price_eur
+    link = oferta.get('url', '#')
+    
+    try:
+        preco_eur = float(preco_eur)
+        preco_brl = preco_eur * exchange_rate
+    except (ValueError, TypeError):
+        preco_brl = 0.0
+        
+    preco_brl_formatado = f"{preco_brl:.2f}".replace('.', ',')
+    
+    mensagem = (
+        f"🔥 **NOVA OFERTA!** 🔥\n\n"
+        f"🏷️ Jogo: **{produto}**\n"
+        f"💸 Preço Estimado: **R$ {preco_brl_formatado}**\n"
+        f"_Preço em EUR: €{preco_eur:.2f} | Câmbio: {exchange_rate:.4f}_\n\n"
+        f"[🛒 COMPRE AQUI! 🛒]({link})\n\n"
+        f"---"
+    )
+    return mensagem
+
+# --- 🕷️ FUNÇÃO DE WEB SCRAPING ---
+
+def perform_scraping(url):
+    """Extrai nome, preço e link dos produtos da Eneba usando BeautifulSoup."""
+    headers = {'User-Agent': USER_AGENT}
+    ofertas = []
+    
+    try:
+        response = requests.get(url, headers=headers, timeout=15)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # Seletor genérico para os cards de produto da Eneba (pode precisar de ajuste)
+        product_cards = soup.find_all('div', class_=lambda c: c and 'product-list-item' in c)
+        
+        if not product_cards:
+            print("⚠️ Scraping: Não encontrou cards de produto. O seletor pode estar desatualizado.")
+            return ofertas
+
+        for card in product_cards:
+            # Extrai Link e ID
+            link_tag = card.find('a', href=True)
+            link = "https://www.eneba.com" + link_tag['href'] if link_tag else None
+            product_id = link.split('/')[-1] if link else None
+            
+            # Extrai Nome
+            name_tag = card.find('span', class_=lambda c: c and 'product-title' in c)
+            name = name_tag.text.strip() if name_tag else None
+            
+            # Extrai Preço (muito sensível ao layout do site!)
+            price_tag = card.find('div', class_=lambda c: c and 'product-price' in c)
+            price_eur = None
+            if price_tag:
+                # Remove símbolos de moeda ($, €, R) e substitui vírgula por ponto para float
+                price_text = price_tag.text.replace('$', '').replace('€', '').replace('R', '').replace(',', '.').strip()
+                try:
+                    price_eur = float(price_text)
+                except ValueError:
+                    price_eur = None
+            
+            if name and link and price_eur:
+                 ofertas.append({
+                    'id': product_id,
+                    'name': name,
+                    'price_usd': price_eur, # Mantemos o nome 'price_usd' para compatibilidade, mas é EUR
+                    'url': link
+                })
+
+        print(f"Scraping concluído: Encontradas {len(ofertas)} ofertas.")
+        return ofertas
+
+    except requests.exceptions.RequestException as e:
+        print(f"ERRO DE CONEXÃO/SCRAPING: {e}")
+        return []
+
+# --- 🚀 LÓGICA DE BUSCA DE OFERTAS AGENDADAS (COM SCRAPING) ---
 
 def buscar_e_enviar_ofertas(numero_de_ofertas):
-    """Busca um número específico de ofertas novas e as envia."""
-    print(f"Buscando {numero_de_ofertas} novas ofertas no feed CSV...")
+    """Faz o scraping, filtra e envia ofertas novas."""
+    print(f"Iniciando Scraping e buscando {numero_de_ofertas} novas ofertas...")
     
     if not BOT_TOKEN or not CHAT_ID: return
 
@@ -119,48 +168,51 @@ def buscar_e_enviar_ofertas(numero_de_ofertas):
     sent_ids = load_sent_ids()
     ids_enviados_nesta_execucao = []
     
-    try:
-        feed_response = requests.get(PLANILHA_URL, timeout=30)
-        feed_response.raise_for_status()
-        data = io.StringIO(feed_response.content.decode('utf-8'))
-        df = pd.read_csv(data)
-        
-        # Início da limpeza de dados
-        df = df.dropna(subset=[COLUNA_ID_PRODUTO, COLUNA_PRECO_USD])
-        df[COLUNA_ID_PRODUTO] = df[COLUNA_ID_PRODUTO].astype(str)
-        df[COLUNA_PRECO_USD] = pd.to_numeric(df[COLUNA_PRECO_USD], errors='coerce')
-        
-        df['price_brl'] = df[COLUNA_PRECO_USD] * current_exchange_rate
-        df_filtrado = df[df['price_brl'] <= PRECO_MAXIMO_FILTRO_BRL]
-        # Fim da limpeza de dados
-        
-        ofertas_novas = df_filtrado[~df_filtrado[COLUNA_ID_PRODUTO].isin(sent_ids)]
-        
-        if ofertas_novas.empty:
-            print("Nenhuma nova oferta que atenda aos filtros encontrada.")
-            return
+    ofertas_extraidas = perform_scraping(SCRAPING_URL)
+    
+    if not ofertas_extraidas:
+        print("Scraping falhou ou não retornou dados. Nenhuma oferta para processar.")
+        return
 
-        ofertas_para_enviar = ofertas_novas.head(numero_de_ofertas)
-        print(f"Enviando {len(ofertas_para_enviar)} ofertas...")
+    ofertas_para_enviar = []
+    
+    for oferta in ofertas_extraidas:
+        product_id = oferta.get('id')
+        price_eur = oferta.get('price_usd', 0.0) # É o valor em Euro
         
-        import asyncio
-        for _, row in ofertas_para_enviar.iterrows():
-            mensagem_formatada = formatar_oferta(row, current_exchange_rate)
-            
-            asyncio.run(enviar_mensagem(CHAT_ID, mensagem_formatada))
-            
-            product_id = row[COLUNA_ID_PRODUTO]
-            ids_enviados_nesta_execucao.append(product_id)
-            print(f"  -> Oferta '{row[COLUNA_PRODUTO]}' enviada.")
+        # Filtros
+        if product_id not in sent_ids:
+            try:
+                price_brl = price_eur * current_exchange_rate
+                if price_brl <= PRECO_MAXIMO_FILTRO_BRL:
+                    ofertas_para_enviar.append(oferta)
+            except (TypeError, ValueError):
+                continue
 
-        if ids_enviados_nesta_execucao:
-            save_sent_ids(ids_enviados_nesta_execucao)
-            print(f"Rastreamento atualizado com {len(ids_enviados_nesta_execucao)} novos IDs.")
+    # Seleciona o número desejado de ofertas novas
+    ofertas_para_enviar = ofertas_para_enviar[:numero_de_ofertas]
 
-    except Exception as e:
-        print(f"Ocorreu um erro geral no processo de busca agendada: {e}")
+    if not ofertas_para_enviar:
+        print("Nenhuma nova oferta que atenda aos filtros foi encontrada após o scraping.")
+        return
+    
+    # ... (Restante do loop de envio)
+    print(f"Enviando {len(ofertas_para_enviar)} ofertas...")
+    
+    for oferta in ofertas_para_enviar:
+        mensagem_formatada = formatar_oferta(oferta, current_exchange_rate)
+        
+        asyncio.run(enviar_mensagem(CHAT_ID, mensagem_formatada))
+        
+        product_id = oferta.get('id')
+        ids_enviados_nesta_execucao.append(product_id)
+        print(f"  -> Oferta '{oferta.get('name', 'N/A')}' enviada.")
 
-# --- 📅 FUNÇÕES DE AGENDAMENTO ESPECÍFICAS ---
+    if ids_enviados_nesta_execucao:
+        save_sent_ids(ids_enviados_nesta_execucao)
+        print(f"Rastreamento atualizado com {len(ids_enviados_nesta_execucao)} novos IDs.")
+
+# --- 📅 FUNÇÕES DE AGENDAMENTO E COMANDOS MANUAIS (Inalteradas) ---
 
 def enviar_mensagem_personalizada(mensagem):
     """Envia uma mensagem de texto simples e depois busca 4 ofertas."""
@@ -170,206 +222,4 @@ def enviar_mensagem_personalizada(mensagem):
 
 def agendar_0930():
     mensagem = "☀️ **BOM DIA, CHAT! É HORA DE ECONOMIZAR!** 🚀\n\nAcompanhe as ofertas fresquinhas para começar o dia no game!"
-    enviar_mensagem_personalizada(mensagem)
-
-def agendar_1100():
-    mensagem = "⚡️ **ALERTA DE OFERTAS DE MEIO DE MANHÃ!** ☕️\n\nNovos preços acabaram de chegar. Não perca tempo!"
-    enviar_mensagem_personalizada(mensagem)
-
-def agendar_1225():
-    mensagem = "⏳ **ALERTA DE OFERTAS PÓS-ALMOÇO!** 🎮\n\nEstá na hora perfeita para caçar aquele jogo que ficou na lista. Veja 4 ofertas que acabaram de cair!"
-    enviar_mensagem_personalizada(mensagem)
-
-def agendar_1300():
-    mensagem = "🍕 **PAUSA PARA O ALMOÇO, OFERTAS NA MESA!** 🍽️\n\nQue tal um jogo novo para animar o resto do seu dia? Confira 4 ofertas!"
-    enviar_mensagem_personalizada(mensagem)
-
-def agendar_1700():
-    mensagem = "⏰ **ÚLTIMA CHAMADA ANTES DO PICO DA NOITE!** 🥳\n\nAs melhores ofertas costumam ir rápido. Garanta a sua agora!"
-    enviar_mensagem_personalizada(mensagem)
-
-def agendar_2000():
-    mensagem = "🌙 **BOA NOITE E BOAS OFERTAS!** ✨\n\nRelaxe e explore 4 jogos incríveis a preços imperdíveis para fechar o dia."
-    enviar_mensagem_personalizada(mensagem)
-
-# --- ⏰ AGENDAMENTO DAS FUNÇÕES ---
-def configurar_agendamento():
-    schedule.every().day.at("09:30").do(agendar_0930) 
-    schedule.every().day.at("11:00").do(agendar_1100) 
-    schedule.every().day.at("12:45").do(agendar_1225)
-    schedule.every().day.at("13:00").do(agendar_1300) 
-    schedule.every().day.at("17:00").do(agendar_1700) 
-    schedule.every().day.at("20:00").do(agendar_2000) 
-    print("Agendamento diário configurado para 09:30, 11:00, 12:25, 13:00, 17:00 e 20:00.")
-
-# --- 🔑 FUNÇÕES PARA COMANDOS MANUAIS (PTB) ---
-
-async def check_admin(update: Update) -> bool:
-    """Verifica se o comando foi enviado no chat privado e pelo Admin."""
-    user = update.effective_user
-    
-    if update.effective_chat.type != "private":
-        await update.message.reply_text("Este comando só pode ser usado no chat privado com o bot.")
-        return False
-        
-    if user.id != ADMIN_USER_ID:
-        await update.message.reply_text("🚫 Acesso negado. Você não é o administrador deste bot.")
-        return False
-    
-    return True
-
-async def start_command(update: Update, context: CallbackContext) -> None:
-    """Comando /start: Envia uma oferta aleatória do feed (Admin Only)."""
-    if not await check_admin(update):
-        return
-
-    await update.message.reply_text("Buscando uma oferta aleatória para envio...")
-    
-    current_exchange_rate = get_exchange_rate()
-    
-    try:
-        feed_response = requests.get(PLANILHA_URL, timeout=30)
-        feed_response.raise_for_status()
-        data = io.StringIO(feed_response.content.decode('utf-8'))
-        df = pd.read_csv(data)
-        
-        # --- CORREÇÃO DE LIMPEZA DE DADOS APLICADA AQUI ---
-        df = df.dropna(subset=[COLUNA_ID_PRODUTO, COLUNA_PRECO_USD, COLUNA_PRODUTO]) # Garante nome e preço
-        df[COLUNA_ID_PRODUTO] = df[COLUNA_ID_PRODUTO].astype(str)
-        df[COLUNA_PRECO_USD] = pd.to_numeric(df[COLUNA_PRECO_USD], errors='coerce')
-        
-        # Aplica o filtro de preço
-        df['price_brl'] = df[COLUNA_PRECO_USD] * current_exchange_rate
-        df_filtrado = df[df['price_brl'] <= PRECO_MAXIMO_FILTRO_BRL]
-        
-        sent_ids = load_sent_ids()
-        df_filtrado = df_filtrado[~df_filtrado[COLUNA_ID_PRODUTO].isin(sent_ids)]
-        # --- FIM DA CORREÇÃO ---
-
-        if df_filtrado.empty:
-            await update.message.reply_text("O feed está vazio, nenhuma oferta atende aos filtros ou todas as ofertas já foram enviadas recentemente!")
-            return
-
-        row = df_filtrado.sample(n=1).iloc[0]
-        mensagem_formatada = formatar_oferta(row, current_exchange_rate)
-        
-        if await enviar_mensagem(CHAT_ID, mensagem_formatada):
-            await update.message.reply_text(f"✅ Oferta aleatória ({row[COLUNA_PRODUTO]}) enviada com sucesso para o canal!")
-            save_sent_ids([row[COLUNA_ID_PRODUTO]])
-        else:
-            await update.message.reply_text("❌ Falha ao enviar a oferta para o canal.")
-            
-    except Exception as e:
-        # Mensagem de erro mais clara em caso de falha de acesso aos dados
-        await update.message.reply_text(f"❌ Erro ao buscar/enviar oferta aleatória: Não foi possível processar os dados da oferta.")
-        print(f"ERRO DE PROCESSAMENTO NO /START: {e}") # Log mais detalhado no Render
-
-
-async def promo_command(update: Update, context: CallbackContext) -> None:
-    """Comando /promo [link]: Envia uma oferta específica (Admin Only)."""
-    if not await check_admin(update):
-        return
-
-    if not context.args or not context.args[0].startswith("http"):
-        await update.message.reply_text("❌ Formato incorreto. Use: `/promo https://completa.com.br/`")
-        return
-
-    url_do_produto = context.args[0]
-    await update.message.reply_text(f"Buscando detalhes do produto na URL: `{url_do_produto}`")
-    
-    current_exchange_rate = get_exchange_rate()
-    
-    try:
-        feed_response = requests.get(PLANILHA_URL, timeout=30)
-        feed_response.raise_for_status()
-        data = io.StringIO(feed_response.content.decode('utf-8'))
-        df = pd.read_csv(data)
-
-        produto_encontrado = df[df[COLUNA_LINK] == url_do_produto].head(1)
-        
-        if produto_encontrado.empty:
-            await update.message.reply_text("❌ Produto não encontrado no feed CSV da Eneba. Verifique a URL.")
-            return
-
-        # --- CORREÇÃO DE LIMPEZA DE DADOS APLICADA AQUI ---
-        # Garante que o produto tem nome e preço antes de usar
-        produto_encontrado = produto_encontrado.dropna(subset=[COLUNA_PRODUTO, COLUNA_PRECO_USD])
-
-        if produto_encontrado.empty:
-            await update.message.reply_text("❌ Produto encontrado, mas sem nome ou preço. Não foi possível enviar a oferta.")
-            return
-        # --- FIM DA CORREÇÃO ---
-
-        row = produto_encontrado.iloc[0]
-        mensagem_formatada = formatar_oferta(row, current_exchange_rate)
-        
-        if await enviar_mensagem(CHAT_ID, mensagem_formatada):
-            await update.message.reply_text(f"✅ Oferta específica ({row[COLUNA_PRODUTO]}) enviada com sucesso para o canal!")
-        else:
-            await update.message.reply_text("❌ Falha ao enviar a oferta para o canal.")
-
-    except Exception as e:
-        await update.message.reply_text(f"❌ Erro ao processar o link: {e}")
-        print(f"ERRO DE PROCESSAMENTO NO /PROMO: {e}") # Log mais detalhado no Render
-
-
-# --- 🌐 FUNÇÕES DE SERVIÇO (Keep Alive e Scheduler) ---
-
-app = Flask(__name__)
-PORT = int(os.environ.get("PORT", 5000))
-
-@app.route('/')
-def home():
-    """Endpoint para o Render e serviços de Keep-Alive/Monitoramento."""
-    return "Bot de Ofertas está online e verificando o feed...", 200
-
-def run_scheduler_loop():
-    """Função que executa o loop do scheduler."""
-    configurar_agendamento()
-    print("Iniciando loop do scheduler em background...")
-    while True:
-        schedule.run_pending()
-        time.sleep(1)
-
-def run_flask_server():
-    """Função que executa o servidor Flask em um thread."""
-    global PORT
-    print(f"Servidor Flask iniciado na porta {PORT} (Keep Alive)...")
-    app.run(host='0.0.0.0', port=PORT, threaded=True) # Threaded=True para estabilidade
-
-# --- INÍCIO DO PROGRAMA ---
-
-def main():
-    print("===========================================")
-    print("  Iniciando Bot de Ofertas Híbrido...      ")
-    print("===========================================")
-    
-    if not BOT_TOKEN:
-        print("ERRO: BOT_TOKEN não configurado. Não é possível iniciar o Bot do Telegram.")
-        return
-
-    # 1. Inicia o Servidor Flask (Keep Alive) e o Scheduler em threads
-    flask_thread = Thread(target=run_flask_server)
-    flask_thread.start()
-    
-    scheduler_thread = Thread(target=run_scheduler_loop)
-    scheduler_thread.start()
-    
-    # Pausa para que os threads de serviço iniciem completamente
-    time.sleep(2) 
-
-    # 2. Inicia o Bot do Telegram (Comandos) na thread principal (Polling)
-    try:
-        application = Application.builder().token(BOT_TOKEN).build()
-        application.add_handler(CommandHandler("start", start_command))
-        application.add_handler(CommandHandler("promo", promo_command))
-        
-        print("Bot do Telegram (Comandos) iniciado em modo polling (PTB na thread principal).")
-        application.run_polling(poll_interval=1)
-        
-    except Exception as e:
-        print(f"ERRO CRÍTICO no Bot do Telegram: {e}")
-
-if __name__ == '__main__':
-    main()
-    
+    enviar_mensagem_personalizada(
