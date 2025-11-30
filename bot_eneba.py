@@ -125,12 +125,14 @@ def buscar_e_enviar_ofertas(numero_de_ofertas):
         data = io.StringIO(feed_response.content.decode('utf-8'))
         df = pd.read_csv(data)
         
+        # Início da limpeza de dados
         df = df.dropna(subset=[COLUNA_ID_PRODUTO, COLUNA_PRECO_USD])
         df[COLUNA_ID_PRODUTO] = df[COLUNA_ID_PRODUTO].astype(str)
         df[COLUNA_PRECO_USD] = pd.to_numeric(df[COLUNA_PRECO_USD], errors='coerce')
         
         df['price_brl'] = df[COLUNA_PRECO_USD] * current_exchange_rate
         df_filtrado = df[df['price_brl'] <= PRECO_MAXIMO_FILTRO_BRL]
+        # Fim da limpeza de dados
         
         ofertas_novas = df_filtrado[~df_filtrado[COLUNA_ID_PRODUTO].isin(sent_ids)]
         
@@ -231,11 +233,21 @@ async def start_command(update: Update, context: CallbackContext) -> None:
         data = io.StringIO(feed_response.content.decode('utf-8'))
         df = pd.read_csv(data)
         
-        sent_ids = load_sent_ids()
-        df_filtrado = df[~df[COLUNA_ID_PRODUTO].isin(sent_ids)]
+        # --- CORREÇÃO DE LIMPEZA DE DADOS APLICADA AQUI ---
+        df = df.dropna(subset=[COLUNA_ID_PRODUTO, COLUNA_PRECO_USD, COLUNA_PRODUTO]) # Garante nome e preço
+        df[COLUNA_ID_PRODUTO] = df[COLUNA_ID_PRODUTO].astype(str)
+        df[COLUNA_PRECO_USD] = pd.to_numeric(df[COLUNA_PRECO_USD], errors='coerce')
         
+        # Aplica o filtro de preço
+        df['price_brl'] = df[COLUNA_PRECO_USD] * current_exchange_rate
+        df_filtrado = df[df['price_brl'] <= PRECO_MAXIMO_FILTRO_BRL]
+        
+        sent_ids = load_sent_ids()
+        df_filtrado = df_filtrado[~df_filtrado[COLUNA_ID_PRODUTO].isin(sent_ids)]
+        # --- FIM DA CORREÇÃO ---
+
         if df_filtrado.empty:
-            await update.message.reply_text("O feed está vazio ou todas as ofertas já foram enviadas recentemente!")
+            await update.message.reply_text("O feed está vazio, nenhuma oferta atende aos filtros ou todas as ofertas já foram enviadas recentemente!")
             return
 
         row = df_filtrado.sample(n=1).iloc[0]
@@ -248,7 +260,9 @@ async def start_command(update: Update, context: CallbackContext) -> None:
             await update.message.reply_text("❌ Falha ao enviar a oferta para o canal.")
             
     except Exception as e:
-        await update.message.reply_text(f"❌ Erro ao buscar/enviar oferta aleatória: {e}")
+        # Mensagem de erro mais clara em caso de falha de acesso aos dados
+        await update.message.reply_text(f"❌ Erro ao buscar/enviar oferta aleatória: Não foi possível processar os dados da oferta.")
+        print(f"ERRO DE PROCESSAMENTO NO /START: {e}") # Log mais detalhado no Render
 
 
 async def promo_command(update: Update, context: CallbackContext) -> None:
@@ -277,6 +291,15 @@ async def promo_command(update: Update, context: CallbackContext) -> None:
             await update.message.reply_text("❌ Produto não encontrado no feed CSV da Eneba. Verifique a URL.")
             return
 
+        # --- CORREÇÃO DE LIMPEZA DE DADOS APLICADA AQUI ---
+        # Garante que o produto tem nome e preço antes de usar
+        produto_encontrado = produto_encontrado.dropna(subset=[COLUNA_PRODUTO, COLUNA_PRECO_USD])
+
+        if produto_encontrado.empty:
+            await update.message.reply_text("❌ Produto encontrado, mas sem nome ou preço. Não foi possível enviar a oferta.")
+            return
+        # --- FIM DA CORREÇÃO ---
+
         row = produto_encontrado.iloc[0]
         mensagem_formatada = formatar_oferta(row, current_exchange_rate)
         
@@ -287,6 +310,8 @@ async def promo_command(update: Update, context: CallbackContext) -> None:
 
     except Exception as e:
         await update.message.reply_text(f"❌ Erro ao processar o link: {e}")
+        print(f"ERRO DE PROCESSAMENTO NO /PROMO: {e}") # Log mais detalhado no Render
+
 
 # --- 🌐 FUNÇÕES DE SERVIÇO (Keep Alive e Scheduler) ---
 
@@ -308,9 +333,9 @@ def run_scheduler_loop():
 
 def run_flask_server():
     """Função que executa o servidor Flask em um thread."""
-    global PORT # Garante que estamos usando a variável global
+    global PORT
     print(f"Servidor Flask iniciado na porta {PORT} (Keep Alive)...")
-    app.run(host='0.0.0.0', port=PORT)
+    app.run(host='0.0.0.0', port=PORT, threaded=True) # Threaded=True para estabilidade
 
 # --- INÍCIO DO PROGRAMA ---
 
@@ -330,8 +355,10 @@ def main():
     scheduler_thread = Thread(target=run_scheduler_loop)
     scheduler_thread.start()
     
+    # Pausa para que os threads de serviço iniciem completamente
+    time.sleep(2) 
+
     # 2. Inicia o Bot do Telegram (Comandos) na thread principal (Polling)
-    # Esta é a correção final: Usar a thread principal para o polling PTB.
     try:
         application = Application.builder().token(BOT_TOKEN).build()
         application.add_handler(CommandHandler("start", start_command))
@@ -345,3 +372,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+    
