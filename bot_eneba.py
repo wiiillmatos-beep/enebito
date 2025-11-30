@@ -1,7 +1,8 @@
 import os
-import asyncio
-from threading import Thread
 import logging
+from threading import Thread
+import time
+import asyncio
 from flask import Flask
 
 # Importações do Python Telegram Bot (PTB)
@@ -24,7 +25,6 @@ ADMIN_USER_ID = os.getenv("ADMIN_USER_ID")
 # Parâmetros fixos do seu link de afiliado
 AFILIADO_ID = "WiillzeraTV"
 PARAMS_AFILIADO = f"af_id={AFILIADO_ID}&currency=BRL&region=global&utm_source={AFILIADO_ID}&utm_medium=infl"
-# USER AGENT não é mais necessário, pois o scraping foi removido.
 
 # Variáveis globais
 application = None 
@@ -40,9 +40,6 @@ def transformar_em_afiliado(url_original: str) -> str:
         return f"{url_original}&{PARAMS_AFILIADO}"
     else:
         return f"{url_original}?{PARAMS_AFILIADO}"
-
-# As funções 'get_exchange_rate' e 'scrape_detalhes_produto' foram removidas, 
-# pois o nome e o preço agora são fornecidos manualmente pelo administrador.
 
 # --- 💬 HANDLERS (Comandos do Telegram) ---
 
@@ -62,93 +59,96 @@ async def start_command(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
     await update.message.reply_text(
         f"Olá, {user.first_name}! 👋\n\n"
-        "Este é o seu bot de afiliados Eneba, configurado para **entrada manual**.\n\n"
-        "**Modo de Uso (Admin):**\n"
-        "Use o comando `/oferta` no formato:\n"
-        "**/oferta <link da Eneba> | <Nome do Jogo> | <Preço em BRL>**\n\n"
-        "Exemplo:\n"
-        "`/oferta https://www.eneba.com/game | God of War Ragnarok | 149,90`\n\n"
-        "Eu montarei a mensagem com seu link de afiliado e a imagem de pré-visualização do jogo.",
+        "Este é o seu bot de afiliados Eneba.\n\n"
+        "**Modo de Uso:**\n"
+        "Como administrador, use o comando `/oferta` para enviar ofertas para o canal.\n\n"
+        "**Formato:**\n"
+        "`/oferta <link da eneba> // <Nome do Jogo> // <Preço em BRL>`\n\n"
+        "**Exemplo:**\n"
+        "`/oferta https://www.eneba.com/exemplo // Nome do Jogo Teste // R$123,45`\n\n"
+        "O bot montará a mensagem com a imagem de pré-visualização, o nome, o preço e um botão de compra com seu link de afiliado.",
         parse_mode=ParseMode.MARKDOWN
     )
 
 async def send_oferta_command(update: Update, context: CallbackContext) -> None:
-    """
-    Processa o comando /oferta com input manual (link | nome | preço), 
-    transforma o link e envia a oferta formatada para o canal.
-    """
+    """Processa o comando /oferta com link, nome e preço."""
     
     if not await check_admin(update):
         return
         
-    if not context.args:
+    full_text = context.args
+    if not full_text:
         await update.message.reply_text(
-            "❌ Comando incompleto. Use: `/oferta <link> | <Nome do Jogo> | <Preço em BRL>`"
+            "❌ Formato incorreto. Use: `/oferta <link da eneba> // <Nome do Jogo> // <Preço em BRL>`",
+            parse_mode=ParseMode.MARKDOWN
         )
         return
 
-    # Junta todos os argumentos e divide pela barra vertical (|), limitando a 3 partes
-    full_text = " ".join(context.args)
-    parts = [p.strip() for p in full_text.split('|', 2)] 
-
+    # Junta os argumentos para o caso de espaços e então divide pelo novo separador " // "
+    full_text_str = " ".join(full_text)
+    parts = full_text_str.split(' // ', 2) # Divide em no máximo 3 partes
+    
     if len(parts) != 3:
         await update.message.reply_text(
-            "❌ Formato inválido. Use exatamente duas barras `|` para separar Link, Nome e Preço.\n"
-            "Exemplo: `/oferta https://eneba.com/game | God of War Ragnarok | 149,90`"
+            "❌ Formato incorreto. Certifique-se de usar `//` para separar Link, Nome e Preço.\n"
+            "Ex: `/oferta https://www.eneba.com/exemplo // Nome do Jogo Teste // R$123,45`",
+            parse_mode=ParseMode.MARKDOWN
         )
         return
 
-    url_original, nome_jogo, preco_str = parts
+    url_original = parts[0].strip()
+    nome_jogo = parts[1].strip()
+    preco_str = parts[2].strip()
 
-    # 1. Validação do Link
-    if "eneba.com" not in url_original or not url_original.startswith("http"):
-        await update.message.reply_text("❌ Link inválido. Por favor, cole uma URL completa da Eneba.")
+    # Validação básica do link
+    if not url_original.startswith("http") or "eneba.com" not in url_original:
+        await update.message.reply_text("❌ Link inválido. Por favor, forneça uma URL completa da Eneba.")
         return
-        
-    # 2. Formatação e Validação do Preço
+
+    # Validação do preço
     try:
-        # Tenta limpar o preço para garantir que é um número (ex: 149,90 -> 149.90)
-        # O replace('R$', '') é para permitir que o admin digite 'R$ 149,90'
-        preco_brl_float = float(preco_str.replace('R$', '').replace('.', '').replace(',', '.').strip())
-        preco_brl_formatado = f"R$ {preco_brl_float:.2f}".replace('.', ',')
+        # Remove "R$" e substitui vírgula por ponto para float
+        preco_limpo = preco_str.replace("R$", "").replace(",", ".").strip()
+        preco_float = float(preco_limpo)
+        preco_brl_formatado = f"R$ {preco_float:.2f}".replace('.', ',')
     except ValueError:
         await update.message.reply_text(
-            f"❌ Preço inválido: `{preco_str}`. Certifique-se de que é um número válido (ex: 149,90)."
+            f"❌ Preço inválido: `{preco_str}`. Certifique-se de que é um número válido (ex: 149,90).",
+            parse_mode=ParseMode.MARKDOWN
         )
         return
+        
+    await update.message.reply_text("Gerando oferta para o canal...")
 
-    await update.message.reply_text(f"Processando oferta manual para: {nome_jogo}...")
-
-    # 3. Geração do Link de Afiliado
     link_afiliado = transformar_em_afiliado(url_original)
     
-    # 4. Construção da Mensagem
-    # Incluímos o link original na mensagem para que o Telegram gere a pré-visualização (imagem/título).
+    # Template da mensagem para o canal
     mensagem_canal = (
-        f"🚨 **OFERTA QUENTE NA ENEBA!** 🚨\n\n"
-        f"🎮 **{nome_jogo}**\n"
+        f"🎮 **{nome_jogo}**\n\n"
         f"💰 Preço: **{preco_brl_formatado}**\n\n"
-        f"🔗 Link do Produto: {url_original}\n\n" # Link visível para preview
-        f"Seu código de afiliado: `{AFILIADO_ID}`"
+        f"<code>{url_original}</code>" # Link para pré-visualização (não clicável)
     )
 
-    # 5. Botão Clicável
-    keyboard = [[InlineKeyboardButton("🔥 COMPRE AQUI E APOIE O CANAL! 🔥", url=link_afiliado)]]
+    # Cria o Botão Clicável (Inline Keyboard)
+    keyboard = [[InlineKeyboardButton("🛒 COMPRE AGORA E APOIE O CANAL! 🛒", url=link_afiliado)]]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    # 6. Envio para o canal público
+    # Envia a mensagem para o canal público
     try:
         await context.bot.send_message(
             chat_id=CHAT_ID_DESTINO,
             text=mensagem_canal,
             reply_markup=reply_markup,
-            parse_mode=ParseMode.MARKDOWN
+            parse_mode=ParseMode.HTML, # IMPORTANTE: Para o <code> funcionar
+            disable_web_page_preview=False # Permite que o Telegram gere a pré-visualização
         )
         await update.message.reply_text(
-            f"✅ Oferta enviada com sucesso para o canal: {CHAT_ID_DESTINO}\n"
+            f"✅ Oferta de afiliado enviada com sucesso para o canal: `{CHAT_ID_DESTINO}`\n"
+            "Pré-visualização da imagem gerada, link no corpo da mensagem não clicável.",
+            parse_mode=ParseMode.MARKDOWN
         )
     except Exception as e:
-        await update.message.reply_text(f"❌ ERRO CRÍTICO ao enviar para o canal. Verifique permissões/ID. O link gerado foi: {link_afiliado}")
+        await update.message.reply_text(f"❌ ERRO ao enviar para o canal. Verifique permissões/ID: `{e}`")
         logger.error(f"ERRO DE ENVIO para {CHAT_ID_DESTINO}: {e}")
 
 
@@ -165,8 +165,8 @@ def run_flask_server():
     """Inicia o servidor Flask em uma thread separada para não bloquear o Polling."""
     global PORT
     logger.info(f"Iniciando servidor Flask (Keep-Alive) na porta {PORT}...")
-    # Usa o servidor Flask embutido (desenvolvimento) por ser simples e em uma thread separada
     try:
+        # Usa o servidor Flask embutido (desenvolvimento) por ser simples e em uma thread separada
         app_flask.run(host='0.0.0.0', port=PORT, debug=False, use_reloader=False)
     except Exception as e:
         logger.error(f"ERRO ao iniciar o servidor Flask Keep-Alive: {e}")
@@ -174,8 +174,7 @@ def run_flask_server():
 # --- 🏃 INÍCIO DO PROGRAMA ---
 
 async def init_application(application_instance: Application):
-    """Função assíncrona para excluir o webhook antes de iniciar o polling.
-       Esta função é executada via hook post_init."""
+    """Função assíncrona para excluir o webhook antes de iniciar o polling."""
     logger.info("Verificando e excluindo qualquer webhook remanescente para evitar conflitos...")
     try:
         # Chama a API do Telegram para garantir que o Webhook seja removido
@@ -211,16 +210,14 @@ def main():
     flask_thread = Thread(target=run_flask_server)
     flask_thread.start()
 
-    # Handlers do Telegram
+    # Handlers do Telegram (deve vir depois da criação da application)
     application.add_handler(CommandHandler("start", start_command))
-    # NOVO: Handler para o comando manual /oferta
     application.add_handler(CommandHandler("oferta", send_oferta_command))
-    
-    # O MessageHandler antigo (que tentava scraping) foi removido.
 
     # 4. Inicia o Polling na thread principal (mantém o processo vivo)
     logger.info("Iniciando Polling do Telegram Bot na thread principal...")
     try:
+        # run_polling é síncrono e mantém o programa em execução
         application.run_polling(poll_interval=5, timeout=30)
     except Exception as e:
         logger.critical(f"ERRO CRÍTICO no Polling (Thread Principal): {e}")
