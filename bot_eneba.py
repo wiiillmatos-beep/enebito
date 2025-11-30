@@ -23,7 +23,7 @@ ADMIN_USER_ID = int(os.getenv("ADMIN_USER_ID", 0))
 
 # ** ATENÇÃO: SUBSTITUA ESTE LINK **
 # URL da página de ofertas da Eneba que será monitorada.
-SCRAPING_URL = "https://www.eneba.com/store/xbox-games?page=1&sortBy=PRICE_ASC" 
+SCRAPING_URL = "https://www.eneba.com/br/store/xbox-games?drms[]=xbox&page=1&regions[]=egypt&regions[]=latam&regions[]=saudi_arabia&regions[]=argentina&types[]=game" 
 
 PRECO_MAXIMO_FILTRO_BRL = 150.00 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
