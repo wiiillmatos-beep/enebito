@@ -20,7 +20,11 @@ from telegram.ext import Application, CommandHandler, CallbackContext, filters
 
 BOT_TOKEN = os.getenv("BOT_TOKEN") 
 CHAT_ID = os.getenv("CHAT_ID")
-WEBHOOK_URL = os.getenv("WEBHOOK_URL", "https://SEU_NOME_DO_SERVICO.onrender.com")
+
+# ** IMPORTANTE: O Render definirá o WEBHOOK_URL automaticamente com a URL do seu serviço **
+WEBHOOK_URL = os.getenv("WEBHOOK_URL") 
+if not WEBHOOK_URL:
+    print("⚠️ ERRO: WEBHOOK_URL não definida. O Webhook não será configurado.")
 
 # LEITURA ROBUSTA DO ADMIN_USER_ID
 admin_user_id_str = os.getenv("ADMIN_USER_ID")
@@ -37,10 +41,11 @@ PRECO_MAXIMO_FILTRO_BRL = 150.00
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
 RASTREAMENTO_FILE = 'sent_offers_ids.txt' 
 
-telegram_bot = Bot(token=BOT_TOKEN or "placeholder") 
-application = None # Inicializado em main()
+# Variáveis globais para serem inicializadas em main()
+telegram_bot = None 
+application = None
 
-# --- DEMAIS FUNÇÕES (GET_EXCHANGE_RATE, LOAD/SAVE IDS, FORMATAR_OFERTA, PERFORM_SCRAPING) FICAM IGUAIS ---
+# --- 💵 FUNÇÃO PARA BUSCAR A COTAÇÃO DE CÂMBIO (EUR/BRL) ---
 
 def get_exchange_rate():
     """Busca a taxa de câmbio EUR/BRL atualizada."""
@@ -52,6 +57,8 @@ def get_exchange_rate():
     except requests.exceptions.RequestException:
         print("⚠️ Erro ao obter câmbio EUR/BRL. Usando taxa fallback (5.50).")
         return 5.50
+
+# --- 💾 RASTREAMENTO E ENVIO ---
 
 def load_sent_ids():
     """Carrega IDs de ofertas já enviadas."""
@@ -68,11 +75,12 @@ def save_sent_ids(ids_para_adicionar):
 
 async def enviar_mensagem(chat_id_destino, texto):
     """Envia a mensagem ao Telegram."""
-    if not telegram_bot.token or not chat_id_destino:
+    global telegram_bot # Usa o objeto global inicializado em main()
+    
+    if not telegram_bot or not chat_id_destino:
         return False
         
     try:
-        # Usa o objeto global 'telegram_bot'
         await telegram_bot.send_message(
             chat_id=chat_id_destino,
             text=texto,
@@ -107,6 +115,8 @@ def formatar_oferta(oferta, exchange_rate):
         f"---"
     )
     return mensagem
+
+# --- 🕷️ FUNÇÃO DE WEB SCRAPING ---
 
 def perform_scraping(url):
     """Extrai nome, preço e link dos produtos da Eneba usando BeautifulSoup."""
@@ -163,7 +173,8 @@ def buscar_e_enviar_ofertas(numero_de_ofertas):
     """Faz o scraping, filtra e envia ofertas novas."""
     print(f"Iniciando Scraping e buscando {numero_de_ofertas} novas ofertas...")
     
-    if not BOT_TOKEN or not CHAT_ID: return
+    global telegram_bot 
+    if not telegram_bot or not CHAT_ID: return
 
     current_exchange_rate = get_exchange_rate()
     sent_ids = load_sent_ids()
@@ -200,7 +211,7 @@ def buscar_e_enviar_ofertas(numero_de_ofertas):
     for oferta in ofertas_para_enviar:
         mensagem_formatada = formatar_oferta(oferta, current_exchange_rate)
         
-        # Agora o envio deve usar o asyncio.run, pois não estamos mais no loop do bot
+        # Uso de asyncio.run() para enviar mensagem assíncrona
         asyncio.run(enviar_mensagem(CHAT_ID, mensagem_formatada))
         
         product_id = oferta.get('id')
@@ -211,11 +222,11 @@ def buscar_e_enviar_ofertas(numero_de_ofertas):
         save_sent_ids(ids_enviados_nesta_execucao)
         print(f"Rastreamento atualizado com {len(ids_enviados_nesta_execucao)} novos IDs.")
 
-# --- DEMAIS FUNÇÕES (AGENDAMENTO) FICAM IGUAIS ---
+# --- 📅 FUNÇÕES DE AGENDAMENTO ---
 
 def enviar_mensagem_personalizada(mensagem):
     """Envia uma mensagem de texto simples e depois busca 4 ofertas."""
-    import asyncio
+    # Uso de asyncio.run() para rodar funções assíncronas do Telegram
     asyncio.run(enviar_mensagem(CHAT_ID, mensagem))
     buscar_e_enviar_ofertas(4) 
 
@@ -254,6 +265,7 @@ def configurar_agendamento():
     print("Agendamento diário configurado para 09:30, 11:00, 12:25, 13:00, 17:00 e 20:00.")
 
 # --- 🔑 FUNÇÕES PARA COMANDOS MANUAIS (COM SCRAPING) ---
+# As funções de comandos /start e /promo permanecem as mesmas.
 
 async def check_admin(update: Update) -> bool:
     """Verifica se o comando foi enviado no chat privado e pelo Admin."""
@@ -381,14 +393,15 @@ def home():
 @app.route('/telegram', methods=['POST'])
 async def webhook():
     """Recebe e processa as atualizações do Telegram via Webhook."""
-    global application # Usa o objeto application configurado em main
+    global application 
     
     if not application:
         return "Aplicação do bot não iniciada", 500
 
     if request.method == 'POST':
         update_json = request.get_json(force=True)
-        update = Update.de_json(update_json, telegram_bot)
+        # CORREÇÃO: Usar application.bot, que foi inicializado corretamente em main()
+        update = Update.de_json(update_json, application.bot) 
         
         # Processa a atualização de forma assíncrona
         async with application:
@@ -397,7 +410,7 @@ async def webhook():
         return 'ok', 200
     return 'Bad Request', 400
 
-# O Scheduler e o Flask são mantidos nas threads originais
+# O Scheduler é mantido em uma thread separada
 def run_scheduler_loop():
     """Função que executa o loop do scheduler."""
     configurar_agendamento()
@@ -408,8 +421,9 @@ def run_scheduler_loop():
 
 def run_flask_server():
     global PORT
-    print(f"Servidor Flask iniciado na porta {PORT} (Keep Alive) usando Waitress...")
+    print(f"Servidor Flask iniciado na porta {PORT} (Webhooks) usando Waitress...")
     # Waitress é um servidor WSGI de produção
+    # O Flask, com o extra [async], lida com a assincronicidade interna.
     serve(app, host='0.0.0.0', port=PORT)
 
 # --- INÍCIO DO PROGRAMA ---
@@ -424,6 +438,7 @@ async def set_webhook_url(app_instance, url):
 
 def main():
     global application # Define a aplicação do bot no escopo global
+    global telegram_bot # Define o bot no escopo global
     print("===========================================")
     print("  Iniciando Bot de Ofertas Híbrido...      ")
     print("===========================================")
@@ -438,22 +453,28 @@ def main():
         print("ERRO: BOT_TOKEN não configurado. Não é possível iniciar o Bot do Telegram.")
         return
 
-    # 1. Configura a aplicação do Telegram (sem o loop de polling)
+    # 1. Configura a aplicação do Telegram
     application = Application.builder().token(BOT_TOKEN).build()
+    
+    # *** CORREÇÃO: Atribui o objeto Bot corretamente inicializado ***
+    telegram_bot = application.bot
+    # **************************************************************
+    
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("promo", promo_command))
     
     # Define o Webhook (URL Completa)
-    full_webhook_url = f"{WEBHOOK_URL}/telegram"
-    asyncio.run(set_webhook_url(application, full_webhook_url))
+    if WEBHOOK_URL:
+        full_webhook_url = f"{WEBHOOK_URL}/telegram"
+        asyncio.run(set_webhook_url(application, full_webhook_url))
+    else:
+        print("⚠️ Pulando configuração de Webhook pois WEBHOOK_URL não está definida.")
 
-    # 2. Inicia o Servidor Flask (Webserver/Webhook) e o Scheduler em threads separadas.
-    # O Flask agora gerencia a thread principal para o Webhook
-    
+    # 2. Inicia o Scheduler em uma thread separada.
     scheduler_thread = Thread(target=run_scheduler_loop)
     scheduler_thread.start()
 
-    # O servidor Flask roda na thread principal (como é o padrão para Webhooks)
+    # 3. O servidor Flask roda na thread principal (como é o padrão para Webhooks)
     run_flask_server()
 
 
