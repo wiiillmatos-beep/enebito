@@ -29,8 +29,7 @@ else:
     print("⚠️ ERRO: ADMIN_USER_ID não definido ou não é um número. Comandos de admin serão desativados.")
     ADMIN_USER_ID = 0
     
-# ** LINK CORRIGIDO: SUA URL DE SCRAPING ESPECÍFICA **
-# URL da página de ofertas da Eneba que será monitorada.
+# ** LINK DE SCRAPING ESPECÍFICO **
 SCRAPING_URL = "https://www.eneba.com/br/store/xbox-games?drms[]=xbox&page=1&regions[]=egypt&regions[]=latam&regions[]=saudi_arabia&regions[]=argentina&types[]=game" 
 
 PRECO_MAXIMO_FILTRO_BRL = 150.00 
@@ -386,7 +385,6 @@ def run_scheduler_loop():
         schedule.run_pending()
         time.sleep(1)
 
-# Usando Waitress para servidor de produção (corrigindo erro de Polling)
 def run_flask_server():
     global PORT
     print(f"Servidor Flask iniciado na porta {PORT} (Keep Alive) usando Waitress...")
@@ -412,14 +410,15 @@ def main():
     
     time.sleep(2) 
 
-    # 2. Inicia o Bot do Telegram (Comandos) na thread principal (Polling).
+    # 2. Inicia o Bot do Telegram (Comandos) na thread principal.
     try:
         application = Application.builder().token(BOT_TOKEN).build()
         application.add_handler(CommandHandler("start", start_command))
         application.add_handler(CommandHandler("promo", promo_command))
         
-        print("Bot do Telegram (Comandos) iniciado em modo polling (PTB na thread principal).")
-        application.run_polling() 
+        print("Bot do Telegram (Comandos) iniciado em modo 'run_forever' (PTB na thread principal).")
+        # CORREÇÃO: Troca run_polling() por run_forever() para evitar erro de cleanup
+        application.run_forever() 
         
     except Exception as e:
         print(f"ERRO CRÍTICO no Bot do Telegram: {e}")
