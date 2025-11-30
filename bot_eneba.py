@@ -19,8 +19,19 @@ from telegram.ext import Application, CommandHandler, CallbackContext, filters
 
 BOT_TOKEN = os.getenv("BOT_TOKEN") 
 CHAT_ID = os.getenv("CHAT_ID")
-ADMIN_USER_ID = int(os.getenv("ADMIN_USER_ID", 0)) 
 
+# NOVA LEITURA SEGURA DO ADMIN_USER_ID
+admin_user_id_str = os.getenv("ADMIN_USER_ID")
+if admin_user_id_str:
+    try:
+        ADMIN_USER_ID = int(admin_user_id_str)
+    except ValueError:
+        print("ERRO: ADMIN_USER_ID deve ser um número inteiro. Usando 0 como fallback.")
+        ADMIN_USER_ID = 0
+else:
+    print("ERRO: Variável ADMIN_USER_ID não definida. Os comandos /start e /promo não funcionarão.")
+    ADMIN_USER_ID = 0
+    
 # ** ATENÇÃO: SUBSTITUA ESTE LINK **
 # URL da página de ofertas da Eneba que será monitorada.
 SCRAPING_URL = "https://www.eneba.com/br/store/xbox-games?drms[]=xbox&page=1&regions[]=egypt&regions[]=latam&regions[]=saudi_arabia&regions[]=argentina&types[]=game" 
