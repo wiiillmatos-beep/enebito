@@ -19,7 +19,7 @@ from telegram.ext import Application, CommandHandler, CallbackContext, filters
 # IDs essenciais lidos do ambiente do Render
 BOT_TOKEN = os.getenv("BOT_TOKEN") 
 CHAT_ID = os.getenv("CHAT_ID")
-# Lê o ID do admin. O valor padrão 0 garante que a conversão para int funcione mesmo se a variável não estiver setada
+# Lê o ID do admin. O valor padrão 0 garante que a conversão para int funcione
 ADMIN_USER_ID = int(os.getenv("ADMIN_USER_ID", 0)) 
 
 # A mensagem de erro será impressa, mas não impede o Flask de iniciar.
@@ -38,7 +38,6 @@ COLUNA_PRECO_USD = 'final_price'
 COLUNA_LINK = 'url'             
 
 # Inicializa o Bot do Telegram para uso em funções (fora dos Handlers do PTB)
-# Adicionamos um placeholder para evitar erro se o BOT_TOKEN for None
 telegram_bot = Bot(token=BOT_TOKEN or "placeholder") 
 
 # --- 💵 FUNÇÃO PARA BUSCAR A COTAÇÃO DE CÂMBIO ---
@@ -71,7 +70,6 @@ def save_sent_ids(ids_para_adicionar):
 def formatar_oferta(row, exchange_rate):
     """Formata os dados da linha do CSV em uma mensagem com botão de compra."""
     produto = row[COLUNA_PRODUTO]
-    # Trata valores não numéricos no preço, se necessário
     try:
         preco_usd = float(row[COLUNA_PRECO_USD])
     except ValueError:
@@ -147,7 +145,6 @@ def buscar_e_enviar_ofertas(numero_de_ofertas):
         for _, row in ofertas_para_enviar.iterrows():
             mensagem_formatada = formatar_oferta(row, current_exchange_rate)
             
-            # Executa a função assíncrona
             asyncio.run(enviar_mensagem(CHAT_ID, mensagem_formatada))
             
             product_id = row[COLUNA_ID_PRODUTO]
@@ -177,6 +174,11 @@ def agendar_1100():
     mensagem = "⚡️ **ALERTA DE OFERTAS DE MEIO DE MANHÃ!** ☕️\n\nNovos preços acabaram de chegar. Não perca tempo!"
     enviar_mensagem_personalizada(mensagem)
 
+def agendar_1225():
+    # NOVO HORÁRIO
+    mensagem = "⏳ **ALERTA DE OFERTAS PÓS-ALMOÇO!** 🎮\n\nEstá na hora perfeita para caçar aquele jogo que ficou na lista. Veja 4 ofertas que acabaram de cair!"
+    enviar_mensagem_personalizada(mensagem)
+
 def agendar_1300():
     mensagem = "🍕 **PAUSA PARA O ALMOÇO, OFERTAS NA MESA!** 🍽️\n\nQue tal um jogo novo para animar o resto do seu dia? Confira 4 ofertas!"
     enviar_mensagem_personalizada(mensagem)
@@ -193,10 +195,11 @@ def agendar_2000():
 def configurar_agendamento():
     schedule.every().day.at("09:30").do(agendar_0930) 
     schedule.every().day.at("11:00").do(agendar_1100) 
+    schedule.every().day.at("12:25").do(agendar_1225) # NOVO HORÁRIO ADICIONADO
     schedule.every().day.at("13:00").do(agendar_1300) 
     schedule.every().day.at("17:00").do(agendar_1700) 
     schedule.every().day.at("20:00").do(agendar_2000) 
-    print("Agendamento diário configurado para 09:30, 11:00, 13:00, 17:00 e 20:00.")
+    print("Agendamento diário configurado para 09:30, 11:00, 12:25, 13:00, 17:00 e 20:00.")
 
 # --- 🔑 FUNÇÕES PARA COMANDOS MANUAIS (PTB) ---
 
@@ -319,9 +322,10 @@ def run_telegram_bot_loop():
         application.add_handler(CommandHandler("start", start_command))
         application.add_handler(CommandHandler("promo", promo_command))
         
-        print("Bot do Telegram (Comandos) iniciado em modo polling...")
-        # CORREÇÃO: run_until_terminated() é o método correto para rodar em um thread separado
-        application.run_until_terminated() 
+        print("Bot do Telegram (Comandos) iniciado em modo polling (PTB).")
+        
+        # Usa run_polling() para iniciar o loop de escuta de comandos no thread.
+        application.run_polling(poll_interval=1) 
         
     except Exception as e:
         print(f"ERRO CRÍTICO no Bot do Telegram (Polling falhou): {e}")
