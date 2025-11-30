@@ -23,7 +23,7 @@ ADMIN_USER_ID = int(os.getenv("ADMIN_USER_ID", 0))
 
 # ** ATENÇÃO: SUBSTITUA ESTE LINK **
 # URL da página de ofertas da Eneba que será monitorada.
-SCRAPING_URL = "https://www.eneba.com/br/store/xbox-games?drms[]=xbox&page=1&regions[]=egypt&regions[]=latam&regions[]=saudi_arabia&regions[]=argentina&types[]=game" 
+SCRAPING_URL = "https://www.eneba.com/store/xbox-games?page=1&sortBy=PRICE_ASC" 
 
 PRECO_MAXIMO_FILTRO_BRL = 150.00 
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
@@ -241,7 +241,7 @@ def agendar_1700():
 
 def agendar_2000():
     mensagem = "🌙 **BOA NOITE E BOAS OFERTAS!** ✨\n\nRelaxe e explore 4 jogos incríveis a preços imperdíveis para fechar o dia."
-    enviar_mensagem_personalizada(mensagem) # Linha verificada e corrigida
+    enviar_mensagem_personalizada(mensagem)
 
 # --- ⏰ AGENDAMENTO DAS FUNÇÕES ---
 def configurar_agendamento():
@@ -384,11 +384,12 @@ def run_scheduler_loop():
         schedule.run_pending()
         time.sleep(1)
 
+# Usando Waitress para servidor de produção (corrigindo erro de Polling)
 def run_flask_server():
-    """Função que executa o servidor Flask em um thread."""
     global PORT
-    print(f"Servidor Flask iniciado na porta {PORT} (Keep Alive)...")
-    app.run(host='0.0.0.0', port=PORT, threaded=True)
+    print(f"Servidor Flask iniciado na porta {PORT} (Keep Alive) usando Waitress...")
+    from waitress import serve
+    serve(app, host='0.0.0.0', port=PORT)
 
 # --- INÍCIO DO PROGRAMA ---
 
@@ -408,7 +409,6 @@ def main():
     scheduler_thread = Thread(target=run_scheduler_loop)
     scheduler_thread.start()
     
-    # Pausa para garantir que os threads de serviço iniciem.
     time.sleep(2) 
 
     # 2. Inicia o Bot do Telegram (Comandos) na thread principal (Polling).
@@ -418,7 +418,7 @@ def main():
         application.add_handler(CommandHandler("promo", promo_command))
         
         print("Bot do Telegram (Comandos) iniciado em modo polling (PTB na thread principal).")
-        application.run_polling(poll_interval=1)
+        application.run_polling() 
         
     except Exception as e:
         print(f"ERRO CRÍTICO no Bot do Telegram: {e}")
